@@ -209,10 +209,13 @@ External bounds annotations include ``__counted_by``, ``__sized_by``, and
 ``__ended_by``. These annotations do not change the pointer representation,
 meaning they do not have ABI implications.
 
-* ``__counted_by(N)`` : The pointer points to memory that contains ``N``
+* ``__counted_by(N)`` : The pointer or array points to memory that contains ``N``
   elements of pointee type. ``N`` is an expression of integer type which can be
   a simple reference to declaration, a constant including calls to constant
   functions, or an arithmetic expression that does not have side effect. The
+  ``__counted_by`` annotation can be used to describe the size of a flexible
+  array member. In general, the same restrictions for ``__counted_by`` pointers
+  applies to ``__counted_by`` used in flexible array members. The
   ``__counted_by`` annotation cannot apply to pointers to incomplete types or
   types without size such as ``void *``. Instead, ``__sized_by`` can be used to
   describe the byte count.
@@ -816,6 +819,454 @@ bound of ``tmp_ptr`` is derived from ``void *__sized_by_or_null(size)``, which
 is the return type of ``malloc()``. Hence, the pointer arithmetic doesn't
 overflow or ``tmp_ptr`` is null. Therefore, if ``nelems`` was given as a
 compile-time constant, the compiler could remove the checks.
+
+Position of bounds annotations
+------------------------------
+
+Since bounds annotations are type attributes, they are recommended to put where
+other type attributes and type specifiers typically reside. This means, for a
+pointer type, a bounds annotation should come right after the dereference
+operator of the pointer type (e.g., ``T *__counted_by(count)``). For an array
+type, a bounds annotation should come inside the array bracket (e.g., ``T
+arr[__counted_by(count)]``) as this is where type qualifiers for arrays, such as
+static and restrict reside. Compared to using declaration attribute positions,
+this helps to avoid potential ambiguity when annotating nested pointers or
+multi-dimensional arrays.
+
+That being said, the bounds annotations are implemented as GNU-style attributes,
+which doesn't strictly enforce positions for type vs. declaration attributes, so
+the bounds annotations can be placed in the positions where it's typically
+considered as for declaration attributes. If an attribute is added to the
+position of a declaration attribute, e.g., after the identifier (``int **ptr
+__counted_by(size))``, the attribute appertains to the outermost pointer (i.e.,
+``int **``). For array types, this is the outermost array (the first-level
+array) of the declaration. Here are some examples.
+
+.. code-block:: C
+
+   struct s1 {
+      int n;
+      int *__counted_by(n) buf; // recommended position
+   };
+
+   struct s2 {
+      int n;
+      int *buf __counted_by(n); // appertains to the outermost pointer type
+                                // (int *)
+   };
+
+   struct s3 {
+      int n;
+      int fam[__counted_by(n)]; // recommended position
+   };
+
+   struct s4 {
+      int n;
+      int fam[][2] __counted_by(n); // appertains to the outermost
+                                    // (the first-level) array type (int[][2])
+   };
+
+
+Expressions allowed in bounds annotations
+-----------------------------------------
+
+The argument of ``__counted_by`` and ``__sized_by`` is an expression of integer
+type that may include:
+
+* One or more declaration references
+* Constant literal
+* Arithmetic operators without side effects (``+``, ``-``, ``*``, ``%``, ``/``)
+* Relational operators (``==``, ``>``, ``<``, ``!=``, ``>=``, ``<=``)
+* Logical operators (``&&``, ``||``, ``!``)
+* Bitwise operators (``&``, ``|``, ``~``, ``^``, ``<<``, ``>>``)
+* Ternary operator (``?:``)
+* ``sizeof()``
+* Calls to a const function
+
+The expression may NOT include any expressions with side effects and anything
+that's not listed in the above allowed list, which include:
+
+* Arithmetic operators with a side effect (``++``, ``—``)
+* Assignment operators (``=``, ``+=``, etc.)
+* Address of (``&``) operator
+* Dereference (``\*``) operator
+* Calls to a non-const function
+* Array subscript operator (``a[i]``)
+* Anything that's not listed in the above allowed list
+
+Dereference (``\*``) operator can be used to in ``__counted_by`` for a function
+prototype that expects the address of a count variable to be passed as an
+argument. This is to support the idiom for out parameters. If the
+``__counted_by`` argument has a dereference, the argument must be a simple
+dereference operation, it cannot be a subexpression of other operations such as
+arithmetic operation.
+
+``__ended_by`` involves another pointer to describe the bounds information, so
+it is more restricted than the arguments of ``__counted_by`` and ``__sized_by``.
+The argument of ``__ended_by`` can only contain a simple reference to a
+declaration or a simple dereference (``\*``) of a simple declaration reference
+or a constant value.
+
+Name lookup in ``__counted_by`` within struct definition
+--------------------------------------------------------
+
+Hereafter, we will use ``__counted_by`` to represent bounds annotations without
+intentional loss of generality.
+
+The argument of __counted_by can only refer to the fields of the same struct.
+Accordingly, the name lookup for ``__counted_by`` within a struct will always
+find the name declared within the same struct.
+
+.. code-block:: c
+
+   size_t n;
+   struct outer {
+      size_t n; // There is no defined way to refer to a field of outer struct
+                // from nested struct in C.
+      struct nested {
+         size_t n;
+         int *__counted_by(n) buf; // should find `n` the field of struct `nested`
+      };
+   }
+
+
+Can ``__counted_by`` refer to field in nested struct?
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+No. Referring to a member of a nested struct (e.g.,
+``__counted_by(nested.member)``) is not allowed, unless it is a member of
+anonymous struct which is considered as a member of the outer struct and
+directly accessible from it. This restriction is to help guarantee that the
+actual buffer size and the value provided by ``__counted_by`` are always
+synchronized, so the compiler can insert bounds checks based on the correct
+bounds information as described in `Maintaining correctness of bounds
+annotations`_.
+
+In the following example, ``bp`` may alias with ``&ap->b``. This is problematic
+because ``-fbounds-safety`` cannot guarantee that the count value correctly
+indicates the actual buffer size even with the restrictions described in
+`Maintaining correctness of bounds annotations`_.
+
+.. code-block:: C
+
+   struct A {
+      int *__counted_by(b.n) buf; // not allowed
+
+      struct B {
+         int n;
+      } b;
+   };
+
+   void foo(struct A *ap, struct B *bp) {
+      // if `bp` aliases with `&ap->b`,
+      // this will change the bounds info of `buf` without necessary bounds checks
+      bp->n = 100000;
+   }
+
+   void bar(void) {
+      struct A a = { ... };
+      foo(&a, &a->b);
+   }
+
+To avoid this problem, we limit ``__counted_by`` to only refer to members of the
+same struct or members of an anonymous struct, which are considered as members
+of the outer struct.
+
+In order to refer to a field in a nested struct, the nested struct must be
+changed to an anonymous struct as shown in the following example.
+
+.. code-block:: C
+
+   struct A {
+      int *__counted_by(n) buf; // allowed
+
+      struct {
+         int n;
+      };
+   };
+
+
+Can ``__counted_by`` refer to field in outer struct?
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+No. There is no syntax defined to refer to a field declared in an enclosing
+struct from a nested struct, unless the nested struct is an anonymous struct.
+
+Even if we defined the syntax to refer to a field declared in an enclosing
+struct, allowing it will cause the problem that when the nested struct is used
+independently, the nested struct won't be able to access the enclosing struct
+field that potentially means to provide the bounds information.
+
+.. code-block:: C
+
+   struct outer {
+      size_t n;
+
+      struct nested {
+         int *__counted_by(n) buf; // error: undefined reference to `n`;
+                                   // `__counted_by` in struct can only refer to
+                                   // another field of the same struct.
+      } wrap;
+   };
+
+
+   struct nested *p; // struct nested can be used independently, which won't
+                     // have access to `outer::n`.
+
+Name lookup for bounds annotations within function prototype
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The similar name lookup rule as struct applies to ``__counted_by`` in function
+prototypes. The name lookup for ``__counted_by`` on a function parameter or
+return type will only find another parameter of the same function.
+
+Name lookup for __counted_by with examples
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+As shown in the following examples, the name lookup for ``__counted_by`` within
+a struct always finds the field of the same struct and it cannot see name in the
+outer structs.
+
+.. code-block:: C
+
+   struct outer {
+    int n;
+    struct {
+        int *__counted_by(n) buf; // error: reference to undeclared member `n`
+    } m;
+   };
+
+   struct outer {
+      int n;
+      struct {
+         int *__counted_by(n) buf; // finds `m.n` when late-parsing is enabled
+         int n;
+      } m;
+   };
+
+An exception is when the immediate struct containing  __counted_by is an
+anonymous struct, for which members are considered as members of the outer
+structs. In this case, the member lookup will also find the member in the outer
+struct.
+
+.. code-block:: C
+
+   struct outer {
+      int n;
+      struct {
+         int *__counted_by(n) buf; // finds `outer::n`
+         int n; // error: member of anonymous struct redeclares `n`
+      };
+   };
+
+   struct outer {
+      int n;
+      struct {
+         int *__counted_by(n) buf; // finds `outer::n`
+      };
+   };
+
+   struct outer {
+      struct {
+         int *__counted_by(n) buf; // finds `outer::n` when late-parsing is enabled
+      };
+      int n;
+   };
+
+Potential extension to allow member access within ``__counted_by``
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Let's go back to the previous example where we discussed the problem of allowing
+a member access within ``__counted_by``. If the model can prevent creating the
+aliasing in the first place, e.g., by not allowing to take address of any
+instances of ``struct B`` and the member ``n``, we can support a member access
+within ``__counted_by`` without losing the bounds safety guarantee.
+
+.. code-block:: C
+
+   struct A {
+      int *__counted_by(b.n) buf; // not allowed
+
+      struct B {
+         int n;
+      } b;
+   };
+
+   void foo(struct A *ap, struct B *bp) {
+      // if `bp` aliases with `&ap->b`,
+      // this will change the bounds info of `buf` without necessary bounds checks
+      bp->n = 100000;
+   }
+
+   void bar(void) {
+      struct A a = { ... };
+      foo(&a, &a->b); // reporting an error for `&a->b` will prevent from creating an alias
+   }
+
+Here are the specific rules to safely support member access within
+``__counted_by``:
+
+* The pointer or array field with ``__counted_by`` and the fields referred to by
+  the ``__counted_by`` must have the common outer struct enclosing both the
+  fields directly or indirectly in nested structs.
+
+* Fields referred to by ``__counted_by`` can be inside zero or more named or
+  anonymous nested structs within the common outer struct.
+
+* A field with ``__counted_by`` must not be nested at all or can only be nested
+  in anonymous structs within the common outer struct.
+
+   + This is because the argument of ``__counted_by`` cannot refer to a field
+     outside its own named struct.
+
+   + Another angle to look at this is if ``__counted_by`` can refer to a field
+     outside its own named struct, it will not have access to the field when the
+     struct type is used independently, as shown in the following example.
+
+.. code-block:: C
+
+   struct C {
+      int n;
+      struct D {
+         int *__counted_by(n) buf; // error: cannot find `n`
+      } d;
+   };
+
+   // Let's assume `C::n` works here for the sake of example
+   struct C {
+      int n;
+      struct D {
+         int *__counted_by(C::n) buf;
+      } d;
+   };
+
+   void foo(struct D *dp) {
+      dp->buf[0] = 0; // Size of buf? `dp` doesn't have access to the bounds info `n`.
+   }
+
+* A member access path from the common outer struct to the fields referred to by
+  the ``__counted_by`` cannot be address taken, excluding the common outer
+  struct itself.
+
+   + In the above example, ``struct A`` is the common struct for buf and
+     ``B::n``. Thus, it is allowed to take the address of ``a``, which is an
+     instance of ``struct A``, but it is not allowed to take the address of
+     ``a.b`` or ``ap->b``, which is an instance of ``struct B`` nested in
+     ``struct A``. An independent instance of ``struct B`` without being nested
+     in ``struct A`` can still be address taken.
+
+However, this may increase the complexity of the model and we don't have enough
+data yet how usable the model would be, so we leave it as a potential extension
+for future, not being part of the initial landing.
+
+Flexible array members
+----------------------
+
+``__counted_by`` can be used to describe the size of a flexible array member. In
+general, the same restrictions for ``__counted_by`` pointers applies to
+``__counted_by`` used in flexible array members.
+
+When a pointer to struct with flexible array member is ``__single`` and the
+flexible array member is annotated with ``__counted_by``, ``-fbounds-safety``
+guarantees that the extended object size based on __counted_by doesn't exceed
+the actual object size with compile-time diagnostics and run-time checks.
+
+Similar to pointers with ``__counted_by`` as described in `Maintaining
+correctness of bounds annotations`_, ``-fbounds-safety`` enforces that in order
+to update the count of flexible array member, the pointer to struct should also
+be updated immediately before. This way, the compiler can correctly insert
+checks that the dynamic size of object p based on the new count value doesn't
+exceed the actual object size indicated by the right hand side of the assignment
+to object p, which is the size of the object returned by the malloc call in this
+example.
+
+.. code-block:: C
+
+   struct flex {
+      size_t count;
+      int fam[__counted_by(count)];
+   };
+
+   // -fbounds-safety doesn't allow updating `p->count` alone.
+   void foo(struct flex *p) {
+      p->count = 100; // error: assignment to `p->count` requires immediately
+                      // preceding update to `p`.
+   }
+
+   // Updating `p` fixes the error.
+   void foo(struct flex *p) {
+      p = malloc(sizeof(struct flex) + sizeof(int) * 100);
+      p->count = 100;
+   }
+
+However, the pointer to struct with flexible array member can be updated without
+also updating the count value right after. This is to support common use cases
+where a pointer to struct with flexible array member is assigned from
+pre-initialized bag of bytes, like in the following example.
+
+.. code-block:: C
+
+   struct flex {
+      size_t count;
+      int fam[__counted_by(count)];
+   };
+
+   // -fbounds-safety doesn't allow updating `p->count` alone.
+   void foo(void *__sized_by(size) data, size_t size) {
+      struct flex *p2 = mem;
+   }
+
+Run-time checks are inserted when casting a wide pointer (``__bidi_indexable``
+or ``__indexable``) to a single pointer with struct with flexible array member.
+This is to ensure that the pointer has bounds at least as much as the count
+indicates.
+
+.. code-block:: C
+
+   typedef struct flex {
+      int count;
+      int fam[__counted_by(count)];
+   } flex_t;
+
+   void foo(int fam_count) {
+      int size = offsetof(struct flex, fam) + fam_count * sizeof(int);
+
+      // bounds-check inserted:
+      // assert(size >= offsetof(struct flex, fam));
+      // assert(size - offsetof(struct flex, fam) >= fam_count);
+      flex_t *__single p = (flex_t *) malloc(size);
+      p->count = fam_count;
+   }
+
+As shown in the following example, the checks are inserted for the pointers to
+struct with flexible array member when they are ``__single``. If the pointer is
+a wide pointer (``__indexable`` or ``__bidi_indexable``), no checks are inserted
+when updating the pointer value because the pointer itself carries the bounds
+information, with which the compiler performs bounds-checks when the pointer is
+actually dereferenced or is casted to a single pointer.
+
+.. code-block:: C
+
+   typedef struct flex {
+      int count;
+      int fam[__counted_by(count)];
+   } flex_t;
+
+   void foo(int fam_count) {
+      int size = offsetof(struct flex, fam) + fam_count * sizeof(int);
+
+      // No run-time checks are inserted
+      flex_t *p = (flex_t *) malloc(size);
+      // Bounds check inserted for p->count:
+      // upper(p) - p >= sizeof(flex_t)
+      p->count = fam_count;
+
+
+      // Bounds check inserted:
+      // assert(upper(p) - p >= offsetof(struct flex, fam));
+      // assert(upper(p) - p - offsetof(struct flex, fam) >= fam_count);
+      flex_t *__single sp = p;
+   }
 
 Cast rules
 ----------
