@@ -49,6 +49,7 @@
 #include "clang/AST/VTableBuilder.h"
 #include "clang/Basic/AddressSpaces.h"
 #include "clang/Basic/Builtins.h"
+#include "clang/Sema/DeclSpec.h"
 #include "clang/Basic/CommentOptions.h"
 #include "clang/Basic/DiagnosticAST.h"
 #include "clang/Basic/ExceptionSpecificationType.h"
@@ -2510,6 +2511,9 @@ TypeInfo ASTContext::getTypeInfoImpl(const Type *T) const {
   case Type::CountAttributed:
     return getTypeInfo(cast<CountAttributedType>(T)->desugar().getTypePtr());
 
+  case Type::LateParsedAttr:
+    return getTypeInfo(cast<LateParsedAttrType>(T)->getWrappedType().getTypePtr());
+
   case Type::BTFTagAttributed:
     return getTypeInfo(
         cast<BTFTagAttributedType>(T)->getWrappedType().getTypePtr());
@@ -3678,6 +3682,17 @@ QualType ASTContext::getCountAttributedType(
   CountAttributedTypes.InsertNode(CATy, InsertPos);
 
   return QualType(CATy, 0);
+}
+
+QualType ASTContext::getLateParsedAttrType(
+    QualType WrappedTy, LateParsedTypeAttribute *LateParsedAttr) const {
+  QualType CanonTy = getCanonicalType(WrappedTy);
+
+  auto *LPATy = new (*this, alignof(LateParsedAttrType))
+      LateParsedAttrType(WrappedTy, CanonTy, LateParsedAttr);
+
+  Types.push_back(LPATy);
+  return QualType(LPATy, 0);
 }
 
 QualType
@@ -14817,6 +14832,8 @@ static QualType getCommonSugarTypeNode(const ASTContext &Ctx, const Type *X,
                                       DX->isCountInBytes(), DX->isOrNull(),
                                       CDX);
   }
+  case Type::LateParsedAttr:
+    return QualType();
   case Type::PredefinedSugar:
     assert(cast<PredefinedSugarType>(X)->getKind() !=
            cast<PredefinedSugarType>(Y)->getKind());
