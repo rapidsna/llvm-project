@@ -1238,6 +1238,25 @@ struct DeclaratorChunk {
 
   ParsedAttributesView AttrList;
 
+  /* TO_UPSTREAM(BoundsSafety) ON */
+  struct LateParsedAttrInfo {
+    CachedTokens Toks;
+    IdentifierInfo &AttrName;
+    IdentifierInfo *MacroII = nullptr;
+    SourceLocation AttrNameLoc;
+
+    explicit LateParsedAttrInfo(CachedTokens Toks, IdentifierInfo &AttrName,
+                                IdentifierInfo *MacroII,
+                                SourceLocation AttrNameLoc)
+        : Toks(Toks), AttrName(AttrName), MacroII(MacroII), AttrNameLoc(AttrNameLoc) {}
+  };
+
+  SmallVector<LateParsedAttrInfo *, 1> LateParsedAttrInfoList;
+  ArrayRef<LateParsedAttrInfo *> getLateParsedAttrInfoList() const {
+    return LateParsedAttrInfoList;
+  }
+  /* TO_UPSTREAM(BoundsSafety) OFF */
+
   struct PointerTypeInfo {
     /// The type qualifiers: const/volatile/restrict/unaligned/atomic.
     LLVM_PREFERRED_TYPE(DeclSpec::TQ)
@@ -1616,6 +1635,11 @@ struct DeclaratorChunk {
   };
 
   void destroy() {
+    /* BoundsSafety ON */
+    for (auto *LateAttrs: LateParsedAttrInfoList)
+      delete LateAttrs;
+    /* BoundsSafety OFF */
+
     switch (Kind) {
     case DeclaratorChunk::Function:      return Fun.destroy();
     case DeclaratorChunk::Pointer:       return Ptr.destroy();
@@ -1639,7 +1663,9 @@ struct DeclaratorChunk {
                                     SourceLocation VolatileQualLoc,
                                     SourceLocation RestrictQualLoc,
                                     SourceLocation AtomicQualLoc,
-                                    SourceLocation UnalignedQualLoc) {
+                                    SourceLocation UnalignedQualLoc,
+                                    // TO_UPSTREAM(BoundsSafety)
+                                    ArrayRef<LateParsedAttrInfo*> LateAttrInfos = {}) {
     DeclaratorChunk I;
     I.Kind                = Pointer;
     I.Loc                 = Loc;
@@ -1650,6 +1676,11 @@ struct DeclaratorChunk {
     I.Ptr.RestrictQualLoc = RestrictQualLoc;
     I.Ptr.AtomicQualLoc   = AtomicQualLoc;
     I.Ptr.UnalignedQualLoc = UnalignedQualLoc;
+
+    /* TO_UPSTREAM(BoundsSafety) ON */
+    for (auto *LateAttrs: LateAttrInfos)
+      I.LateParsedAttrInfoList.push_back(std::move(LateAttrs));
+    /* TO_UPSTREAM(BoundsSafety) OFF */
     return I;
   }
 
@@ -1667,7 +1698,9 @@ struct DeclaratorChunk {
   /// Return a DeclaratorChunk for an array.
   static DeclaratorChunk getArray(unsigned TypeQuals,
                                   bool isStatic, bool isStar, Expr *NumElts,
-                                  SourceLocation LBLoc, SourceLocation RBLoc) {
+                                  SourceLocation LBLoc, SourceLocation RBLoc,
+                                  // TO_UPSTREAM(BoundsSafety)
+                                  ArrayRef<LateParsedAttrInfo*> LateAttrInfos = {}) {
     DeclaratorChunk I;
     I.Kind          = Array;
     I.Loc           = LBLoc;
@@ -1676,6 +1709,10 @@ struct DeclaratorChunk {
     I.Arr.hasStatic = isStatic;
     I.Arr.isStar    = isStar;
     I.Arr.NumElts   = NumElts;
+    /* TO_UPSTREAM(BoundsSafety) ON */
+    for (auto *LateAttrs: LateAttrInfos)
+      I.LateParsedAttrInfoList.push_back(std::move(LateAttrs));
+    /* TO_UPSTREAM(BoundsSafety) OFF */
     return I;
   }
 

@@ -107,22 +107,16 @@ struct on_pointer_anon_count {
 // field being unavailable.
 
 struct on_member_pointer_complete_ty_ty_pos {
-  // TODO: Allow this
-  // expected-error@+1{{use of undeclared identifier 'size'}}
   struct size_known *__sized_by(size) buf;
   int size;
 };
 
 struct on_member_pointer_incomplete_ty_ty_pos {
-  // TODO: Allow this
-  // expected-error@+1{{use of undeclared identifier 'size'}}
   struct size_unknown * __sized_by(size) buf;
   int size;
 };
 
 struct on_member_pointer_const_incomplete_ty_ty_pos {
-  // TODO: Allow this
-  // expected-error@+1{{use of undeclared identifier 'size'}}
   const struct size_unknown * __sized_by(size) buf;
   int size;
 };
@@ -138,17 +132,11 @@ struct on_member_pointer_void_ty_ty_pos {
 // -
 
 struct on_member_pointer_fn_ptr_ty_pos {
-  // TODO: buffer of `size` function pointers should be allowed
-  // but fails because this isn't late parsed.
-  // expected-error@+1{{use of undeclared identifier 'size'}}
   void (** __sized_by(size) fn_ptr)(void);
   int size;
 };
 
 struct on_member_pointer_fn_ptr_ty_ptr_ty_pos {
-  // TODO: buffer of `size` function pointers should be allowed
-  // but fails because this isn't late parsed.
-  // expected-error@+1{{use of undeclared identifier 'size'}}
   fn_ptr_ty* __sized_by(size) fn_ptr;
   int size;
 };
@@ -162,15 +150,11 @@ struct on_member_pointer_fn_ty_ty_pos {
 };
 
 struct on_member_pointer_fn_ptr_ty_ty_pos {
-  // TODO: buffer of `size` function pointers should be allowed
-  // expected-error@+1{{use of undeclared identifier 'size'}}
   void (** __sized_by(size) fn_ptr)(void);
   int size;
 };
 
 struct on_member_pointer_fn_ptr_ty_typedef_ty_pos {
-  // TODO: This should be allowed with sized_by.
-  // expected-error@+1{{use of undeclared identifier 'size'}}
   fn_ptr_ty __sized_by(size) fn_ptr;
   int size;
 };
@@ -183,15 +167,11 @@ struct on_member_pointer_fn_ptr_ty_ty_pos_inner {
 };
 
 struct on_member_pointer_struct_with_vla_ty_pos {
-  // TODO: This should be allowed with sized_by.
-  // expected-error@+1{{use of undeclared identifier 'size'}}
   struct has_unannotated_vla *__sized_by(size) objects;
   int size;
 };
 
 struct on_member_pointer_struct_with_annotated_vla_ty_pos {
-  // TODO: This should be allowed with sized_by.
-  // expected-error@+1{{use of undeclared identifier 'size'}}
   struct has_annotated_vla* __sized_by(size) objects;
   int size;
 };
@@ -205,8 +185,6 @@ struct on_nested_pointer_inner {
 };
 
 struct on_nested_pointer_outer {
-  // TODO: Allow this
-  // expected-error@+1{{use of undeclared identifier 'size'}}
   struct size_known **__sized_by(size) buf;
   int size;
 };

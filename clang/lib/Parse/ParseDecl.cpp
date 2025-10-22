@@ -43,7 +43,8 @@ using namespace clang;
 
 TypeResult Parser::ParseTypeName(SourceRange *Range, DeclaratorContext Context,
                                  AccessSpecifier AS, Decl **OwnedType,
-                                 ParsedAttributes *Attrs) {
+                                 ParsedAttributes *Attrs,
+                                 LateParsedAttrList *LateAttrs) {
   DeclSpecContext DSC = getDeclSpecContextFromDeclaratorContext(Context);
   if (DSC == DeclSpecContext::DSC_normal)
     DSC = DeclSpecContext::DSC_type_specifier;
@@ -73,6 +74,11 @@ TypeResult Parser::ParseTypeName(SourceRange *Range, DeclaratorContext Context,
   ParseDeclarator(DeclaratorInfo);
   if (Range)
     *Range = DeclaratorInfo.getSourceRange();
+
+  /* TO_UPSTREAM(BoundsSafety) ON*/
+  if (LateAttrs)
+    DistributeCLateParsedAttrs(DeclaratorInfo, nullptr, LateAttrs);
+  /* TO_UPSTREAM(BoundsSafety) OFF*/
 
   if (DeclaratorInfo.isInvalidType())
     return true;
@@ -627,7 +633,8 @@ unsigned Parser::ParseAttributeArgsCommon(
 void Parser::ParseGNUAttributeArgs(
     IdentifierInfo *AttrName, SourceLocation AttrNameLoc,
     ParsedAttributes &Attrs, SourceLocation *EndLoc, IdentifierInfo *ScopeName,
-    SourceLocation ScopeLoc, ParsedAttr::Form Form, Declarator *D) {
+    SourceLocation ScopeLoc, ParsedAttr::Form Form, Declarator *D,
+    size_t NestedTypeLevel) {
 
   assert(Tok.is(tok::l_paren) && "Attribute arg list not starting with '('");
 
@@ -1943,7 +1950,11 @@ Parser::DeclGroupPtrTy Parser::ParseSimpleDeclaration(
 
   ParsedTemplateInfo TemplateInfo;
   DeclSpecContext DSContext = getDeclSpecContextFromDeclaratorContext(Context);
-  ParseDeclarationSpecifiers(DS, TemplateInfo, AS_none, DSContext);
+  // FIXME: Why is PSoon true?
+  LateParsedAttrList BoundsSafetyLateAttrs(
+      /*PSoon=*/true, /*LateAttrParseExperimentalExtOnly=*/true);
+  ParseDeclarationSpecifiers(DS, TemplateInfo, AS_none, DSContext,
+                             &BoundsSafetyLateAttrs);
 
   // If we had a free-standing type definition with a missing semicolon, we
   // may get this far before the problem becomes obvious.
@@ -2725,12 +2736,13 @@ Decl *Parser::ParseDeclarationAfterDeclaratorAndAttributes(
 
 void Parser::ParseSpecifierQualifierList(
     DeclSpec &DS, ImplicitTypenameContext AllowImplicitTypename,
-    AccessSpecifier AS, DeclSpecContext DSC) {
+    AccessSpecifier AS, DeclSpecContext DSC,
+    LateParsedAttrList *LateAttrs) {
   ParsedTemplateInfo TemplateInfo;
   /// specifier-qualifier-list is a subset of declaration-specifiers.  Just
   /// parse declaration-specifiers and complain about extra stuff.
   /// TODO: diagnose attribute-specifiers and alignment-specifiers.
-  ParseDeclarationSpecifiers(DS, TemplateInfo, AS, DSC, nullptr,
+  ParseDeclarationSpecifiers(DS, TemplateInfo, AS, DSC, LateAttrs,
                              AllowImplicitTypename);
 
   // Validate declspec for type-name.
@@ -3136,7 +3148,7 @@ void Parser::ParseAlignmentSpecifier(ParsedAttributes &Attrs,
   }
 }
 
-void Parser::DistributeCLateParsedAttrs(Decl *Dcl,
+void Parser::DistributeCLateParsedAttrs(Declarator &D, Decl *Dcl,
                                         LateParsedAttrList *LateAttrs) {
   if (!LateAttrs)
     return;
@@ -3147,6 +3159,59 @@ void Parser::DistributeCLateParsedAttrs(Decl *Dcl,
         LateAttr->addDecl(Dcl);
     }
   }
+
+  /* TO_UPSTREAM(BoundsSafety) ON */
+  unsigned NestedLevel = 0;
+  struct FunctionChunkInfo {
+    bool Valid = false;
+    unsigned Index = 0;
+  } FuncInfo;
+  std::unique_ptr<ParseScope> ProtoScope;
+  LateParsedAttrList ProtoLateAttrs(true);
+
+  for (unsigned i = 0; i < D.getNumTypeObjects(); ++i) {
+    DeclaratorChunk &DC = D.getTypeObject(i);
+
+    ArrayRef<DeclaratorChunk::LateParsedAttrInfo *> LPAI;
+    switch (DC.Kind) {
+    case DeclaratorChunk::Pointer:
+      LPAI = DC.getLateParsedAttrInfoList();
+      break;
+    case DeclaratorChunk::Array:
+      LPAI = DC.getLateParsedAttrInfoList();
+      break;
+    case DeclaratorChunk::Function:
+      FuncInfo.Index = i;
+      FuncInfo.Valid = true;
+      continue;
+    default:
+      continue;
+    }
+
+    if (!LPAI.empty() && FuncInfo.Valid && !ProtoScope) {
+      const DeclaratorChunk &FuncChunk = D.getTypeObject(FuncInfo.Index);
+      ProtoScope.reset(new ParseScope(this, Scope::FunctionPrototypeScope |
+                                            Scope::DeclScope));
+      const DeclaratorChunk::FunctionTypeInfo &FTI = FuncChunk.Fun;
+      for (unsigned i = 0; i != FTI.NumParams; ++i) {
+        ParmVarDecl *Param = cast<ParmVarDecl>(FTI.Params[i].Param);
+        Actions.ActOnReenterCXXMethodParameter(getCurScope(), Param);
+      }
+      LateAttrs = &ProtoLateAttrs;
+    }
+    for (const auto *LI : LPAI) {
+      LateParsedAttribute *LA = new LateParsedAttribute(
+          this, LI->AttrName, LI->AttrNameLoc, NestedLevel);
+      LA->MacroII = std::move(LI->MacroII);
+      LA->Toks = std::move(LI->Toks);
+      if (Dcl)
+        LA->addDecl(Dcl);
+      LateAttrs->push_back(LA);
+    }
+    NestedLevel++;
+  }
+  ParseLexedCAttributeList(ProtoLateAttrs, false);
+  /* TO_UPSTREAM(BoundsSafety) OFF */
 }
 
 void Parser::ParsePtrauthQualifier(ParsedAttributes &Attrs) {
@@ -4761,7 +4826,7 @@ void Parser::ParseStructDeclaration(
     // We're done with this declarator;  invoke the callback.
     Decl *Field = FieldsCallback(DeclaratorInfo);
     if (Field)
-      DistributeCLateParsedAttrs(Field, LateFieldAttrs);
+      DistributeCLateParsedAttrs(DeclaratorInfo.D, Field, LateFieldAttrs);
 
     // If we don't have a comma, it is either the end of the list (a ';')
     // or an error, bail out.
@@ -6117,7 +6182,8 @@ bool Parser::isConstructorDeclarator(bool IsUnqualified, bool DeductionGuide,
 
 void Parser::ParseTypeQualifierListOpt(
     DeclSpec &DS, unsigned AttrReqs, bool AtomicOrPtrauthAllowed,
-    bool IdentifierRequired, llvm::function_ref<void()> CodeCompletionHandler) {
+    bool IdentifierRequired, llvm::function_ref<void()> CodeCompletionHandler,
+    LateParsedAttrList *LateAttrs) {
   if ((AttrReqs & AR_CXX11AttributesParsed) &&
       isAllowedCXX11AttributeSpecifier()) {
     ParsedAttributes Attrs(AttrFactory);
@@ -6440,21 +6506,78 @@ void Parser::ParseDeclaratorInternal(Declarator &D,
                     ((D.getContext() != DeclaratorContext::CXXNew)
                          ? AR_GNUAttributesParsed
                          : AR_GNUAttributesParsedAndRejected);
+    /* TO_UPSTREAM(BoundsSafety) ON */
+    LateParsedAttrList LateAttrs(/*PSoon=*/true,
+                                 /*LateAttrParseExperimentalExtOnly=*/true);
     ParseTypeQualifierListOpt(DS, Reqs, /*AtomicOrPtrauthAllowed=*/true,
-                              !D.mayOmitIdentifier());
+                              !D.mayOmitIdentifier(),
+                              {}, &LateAttrs);
+    /* TO_UPSTREAM(BoundsSafety) OFF */
     D.ExtendWithDeclSpec(DS);
 
     // Recursively parse the declarator.
     Actions.runWithSufficientStackSpace(
         D.getBeginLoc(), [&] { ParseDeclaratorInternal(D, DirectDeclParser); });
-    if (Kind == tok::star)
+    if (Kind == tok::star) {
+      /* TO_UPSTREAM(BoundsSafety) ON */
+      SmallVector<DeclaratorChunk::LateParsedAttrInfo *, 0> LateAttrInfos;
+      // We parse '__counted_by' or '__ended_by' attributes immediately
+      // if this is a function declarator. We need these attributes to be
+      // parsed early so we can construct the full function type before Sema
+      // is checking and merging the function declaration with the previous
+      // declaration.
+      // XXX: Does it need a guard under attribute-only mode?
+      if (getLangOpts().ExperimentalLateParseAttributes && !LateAttrs.empty()) {
+        unsigned FuncIndex = 0;
+        if (D.isFunctionDeclarator(FuncIndex)) {
+          // Upstream doesn't support bounds safety attributes on functions yet
+          // so avoid taking this path when bounds safety is off.
+          DeclaratorChunk::FunctionTypeInfo FTI = D.getFunctionTypeInfo();
+          ParseScope PrototypeScope(this, Scope::FunctionPrototypeScope |
+                                          Scope::FunctionDeclarationScope |
+                                          Scope::DeclScope);
+          for (unsigned i = 0; i != FTI.NumParams; ++i) {
+            if (Decl *D = FTI.Params[i].Param) {
+              // Param can be missing if the declaration is malformed. The
+              // diagnostic is emitted later.
+              Actions.ActOnReenterCXXMethodParameter(
+                  getCurScope(), cast<ParmVarDecl>(D));
+            }
+          }
+          // Handling nested return type with counted_by, e.g.:
+          //  T *__counted_by(x) *foo(size_t x);
+          unsigned NestedLevel = 0;
+          for (unsigned i = FuncIndex + 1; i != D.getNumTypeObjects(); ++i) {
+            if (D.getTypeObject(i).Kind == DeclaratorChunk::Pointer)
+              NestedLevel++;
+          }
+
+          if (NestedLevel != 0) {
+            for (auto *LateAttr : LateAttrs) {
+              LateAttr->NestedTypeLevel = NestedLevel;
+            }
+          }
+          ParseLexedCAttributeList(LateAttrs, false, &D.getAttributes());
+        } else {
+          for (auto LA : LateAttrs) {
+            auto LI = new DeclaratorChunk::LateParsedAttrInfo(
+                LA->Toks, LA->AttrName, LA->MacroII, LA->AttrNameLoc);
+            LateAttrInfos.push_back(LI);
+            delete LA;
+          }
+        }
+        LateAttrs.clear();
+      }
+      /* TO_UPSTREAM(BoundsSafety) OFF */
       // Remember that we parsed a pointer type, and remember the type-quals.
       D.AddTypeInfo(DeclaratorChunk::getPointer(
                         DS.getTypeQualifiers(), Loc, DS.getConstSpecLoc(),
                         DS.getVolatileSpecLoc(), DS.getRestrictSpecLoc(),
-                        DS.getAtomicSpecLoc(), DS.getUnalignedSpecLoc()),
+                        DS.getAtomicSpecLoc(), DS.getUnalignedSpecLoc(),
+                        // TO_UPSTREAM(BoundsSafety)
+                        LateAttrInfos),
                     std::move(DS.getAttributes()), SourceLocation());
-    else
+    } else
       // Remember that we parsed a Block type, and remember the type-quals.
       D.AddTypeInfo(
           DeclaratorChunk::getBlockPointer(DS.getTypeQualifiers(), Loc),

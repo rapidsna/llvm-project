@@ -1161,10 +1161,12 @@ private:
     IdentifierInfo *MacroII = nullptr;
     SourceLocation AttrNameLoc;
     SmallVector<Decl *, 2> Decls;
+    // TO_UPSTREAM(BoundsSafety)
+    unsigned NestedTypeLevel;
 
     explicit LateParsedAttribute(Parser *P, IdentifierInfo &Name,
-                                 SourceLocation Loc)
-        : Self(P), AttrName(Name), AttrNameLoc(Loc) {}
+                                 SourceLocation Loc, unsigned Level = 0)
+        : Self(P), AttrName(Name), AttrNameLoc(Loc), NestedTypeLevel(Level) {}
 
     void ParseLexedAttributes() override;
 
@@ -1397,7 +1399,8 @@ public:
   ParseTypeName(SourceRange *Range = nullptr,
                 DeclaratorContext Context = DeclaratorContext::TypeName,
                 AccessSpecifier AS = AS_none, Decl **OwnedType = nullptr,
-                ParsedAttributes *Attrs = nullptr);
+                ParsedAttributes *Attrs = nullptr,
+                LateParsedAttrList *LateAttrs = nullptr);
 
 private:
   /// Ident_vector, Ident_bool, Ident_Bool - cached IdentifierInfos for "vector"
@@ -1891,8 +1894,10 @@ private:
 
   void ParseSpecifierQualifierList(
       DeclSpec &DS, AccessSpecifier AS = AS_none,
-      DeclSpecContext DSC = DeclSpecContext::DSC_normal) {
-    ParseSpecifierQualifierList(DS, getImplicitTypenameContext(DSC), AS, DSC);
+      DeclSpecContext DSC = DeclSpecContext::DSC_normal,
+      LateParsedAttrList *LateAttrs = nullptr) {
+    ParseSpecifierQualifierList(DS, getImplicitTypenameContext(DSC), AS, DSC,
+                                LateAttrs);
   }
 
   /// ParseSpecifierQualifierList
@@ -1906,7 +1911,8 @@ private:
   void ParseSpecifierQualifierList(
       DeclSpec &DS, ImplicitTypenameContext AllowImplicitTypename,
       AccessSpecifier AS = AS_none,
-      DeclSpecContext DSC = DeclSpecContext::DSC_normal);
+      DeclSpecContext DSC = DeclSpecContext::DSC_normal,
+      LateParsedAttrList *LateAttrs = nullptr);
 
   /// ParseEnumSpecifier
   /// \verbatim
@@ -2259,7 +2265,8 @@ private:
                              SourceLocation AttrNameLoc,
                              ParsedAttributes &Attrs, SourceLocation *EndLoc,
                              IdentifierInfo *ScopeName, SourceLocation ScopeLoc,
-                             ParsedAttr::Form Form, Declarator *D);
+                             ParsedAttr::Form Form, Declarator *D,
+                             size_t NestedTypeLevel=0);
   IdentifierLoc *ParseIdentifierLoc();
 
   unsigned
@@ -2444,7 +2451,8 @@ private:
                                  SourceLocation ScopeLoc,
                                  ParsedAttr::Form Form);
 
-  void DistributeCLateParsedAttrs(Decl *Dcl, LateParsedAttrList *LateAttrs);
+  void DistributeCLateParsedAttrs(Declarator &D, Decl *Dcl,
+                                  LateParsedAttrList *LateAttrs);
 
   /// Bounds attributes (e.g., counted_by):
   /// \verbatim
@@ -2610,7 +2618,9 @@ private:
   void ParseTypeQualifierListOpt(
       DeclSpec &DS, unsigned AttrReqs = AR_AllAttributesParsed,
       bool AtomicOrPtrauthAllowed = true, bool IdentifierRequired = false,
-      llvm::function_ref<void()> CodeCompletionHandler = {});
+      llvm::function_ref<void()> CodeCompletionHandler = {},
+      // TO_UPSTREAM(BoundsSafety)
+      LateParsedAttrList *LateAttrs = nullptr);
 
   /// ParseDirectDeclarator
   /// \verbatim
@@ -7677,7 +7687,7 @@ private:
   /// [GNU] asm-clobbers:
   ///         asm-string-literal
   ///         asm-clobbers ',' asm-string-literal
-  /// \endverbatim 
+  /// \endverbatim
   ///
   StmtResult ParseAsmStatement(bool &msAsm);
 
