@@ -6534,6 +6534,10 @@ static void handleCountedByAttrField(Sema &S, Decl *D, const ParsedAttr &AL) {
   if (!CountExpr)
     return;
 
+  unsigned Level;
+  if (!S.checkUInt32Argument(AL, AL.getArgAsExpr(1), Level))
+    return;
+
   bool CountInBytes;
   bool OrNull;
   switch (AL.getKind()) {
@@ -6557,7 +6561,7 @@ static void handleCountedByAttrField(Sema &S, Decl *D, const ParsedAttr &AL) {
     llvm_unreachable("unexpected counted_by family attribute");
   }
 
-  if (S.CheckCountedByAttrOnField(FD, CountExpr, CountInBytes, OrNull))
+  if (S.CheckCountedByAttrOnField(FD, CountExpr, Level, CountInBytes, OrNull))
     return;
 
   QualType CAT = S.BuildCountAttributedArrayOrPointerType(

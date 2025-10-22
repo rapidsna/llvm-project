@@ -2461,7 +2461,7 @@ public:
   /// `counted_by_or_null` attribute.
   ///
   /// \returns false iff semantically valid.
-  bool CheckCountedByAttrOnField(FieldDecl *FD, Expr *E, bool CountInBytes,
+  bool CheckCountedByAttrOnField(FieldDecl *FD, Expr *E, unsigned Level, bool CountInBytes,
                                  bool OrNull);
 
   /// Perform Bounds Safety Semantic checks for assigning to a `__counted_by` or

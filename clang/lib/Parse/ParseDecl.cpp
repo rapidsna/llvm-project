@@ -4764,7 +4764,8 @@ void Parser::ParseStructDeclaration(
   MaybeParseCXX11Attributes(Attrs);
 
   // Parse the common specifier-qualifiers-list piece.
-  ParseSpecifierQualifierList(DS);
+  ParseSpecifierQualifierList(DS, AS_none, DeclSpecContext::DSC_normal,
+                              LateFieldAttrs);
 
   // If there are no declarators, this is a free-standing declaration
   // specifier. Let the actions module cope with it.
@@ -6325,7 +6326,9 @@ void Parser::ParseTypeQualifierListOpt(
       // recovery is graceful.
       if (AttrReqs & AR_GNUAttributesParsed ||
           AttrReqs & AR_GNUAttributesParsedAndRejected) {
-        ParseGNUAttributes(DS.getAttributes());
+
+        assert(!LateAttrs || LateAttrs->lateAttrParseExperimentalExtOnly());
+        ParseGNUAttributes(DS.getAttributes(), LateAttrs);
         continue; // do *not* consume the next token!
       }
       // otherwise, FALL THROUGH!

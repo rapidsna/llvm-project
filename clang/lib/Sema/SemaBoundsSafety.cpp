@@ -50,14 +50,58 @@ enum class CountedByInvalidPointeeTypeKind {
   VALID,
 };
 
-bool Sema::CheckCountedByAttrOnField(FieldDecl *FD, Expr *E, bool CountInBytes,
-                                     bool OrNull) {
+namespace {
+class DynamicBoundsAttrInfo {
+public:
+  TypedefNameDecl *TND;
+  ValueDecl *VD;
+  VarDecl *Var;
+  QualType DeclTy;
+  QualType Ty;
+  unsigned EffectiveLevel;
+  bool IsFPtr;
+  Sema::LifetimeCheckKind LifetimeCheck = Sema::LifetimeCheckKind::None;
+  bool ScopeCheck;
+
+  DynamicBoundsAttrInfo(Decl *D, unsigned Level) {
+    TND = dyn_cast<TypedefNameDecl>(D);
+    VD = dyn_cast<ValueDecl>(D);
+    Var = dyn_cast<VarDecl>(D);
+    DeclTy = TND ? TND->getUnderlyingType() : VD->getType();
+    IsFPtr = false;
+    EffectiveLevel = Level;
+    Ty = DeclTy;
+    for (unsigned i = 0; i != Level; ++i) {
+      if (!Ty->isPointerType())
+        break;
+      Ty = Ty->getPointeeType();
+      if (Ty->isFunctionType()) {
+        IsFPtr = true;
+        EffectiveLevel = Level - i - 1;
+        break;
+      }
+    }
+    if (!IsFPtr)
+      LifetimeCheck = Sema::getLifetimeCheckKind(Var);
+    ScopeCheck = (Var && Var->isLocalVarDecl()) || IsFPtr;
+  }
+};
+} // namespace
+
+bool Sema::CheckCountedByAttrOnField(FieldDecl *FD, Expr *E, unsigned Level,
+                                     bool CountInBytes, bool OrNull) {
   // Check the context the attribute is used in
 
   unsigned Kind = getCountAttrKind(CountInBytes, OrNull);
 
   if (FD->getParent()->isUnion()) {
     Diag(FD->getBeginLoc(), diag::err_count_attr_in_union)
+        << Kind << FD->getSourceRange();
+    return true;
+  }
+
+  if (Level != 0) {
+    Diag(FD->getBeginLoc(), diag::err_bounds_safety_nested_dynamic_bound) 
         << Kind << FD->getSourceRange();
     return true;
   }
