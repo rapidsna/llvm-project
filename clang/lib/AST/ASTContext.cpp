@@ -3630,6 +3630,18 @@ QualType ASTContext::getCountAttributedType(
   return QualType(CATy, 0);
 }
 
+QualType ASTContext::getCountAttributedType(
+    QualType WrappedTy, void *LateParsedAttr) const {
+  assert(WrappedTy->isPointerType() || WrappedTy->isArrayType());
+
+  QualType CanonTy = getCanonicalType(WrappedTy);
+
+  auto *CATy = new (*this, alignof(CountAttributedType)) CountAttributedType(WrappedTy, CanonTy, LateParsedAttr);
+
+  Types.push_back(CATy);
+  return QualType(CATy, 0);
+}
+
 QualType
 ASTContext::adjustType(QualType Orig,
                        llvm::function_ref<QualType(QualType)> Adjust) const {

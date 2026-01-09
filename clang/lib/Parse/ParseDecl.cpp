@@ -4813,6 +4813,49 @@ void Parser::ParseLexedCAttributeList(LateParsedAttrList &LAs, bool EnterScope,
   LAs.clear();
 }
 
+void Parser::ParseLexedTypeAttribute(LateParsedAttribute &LA, bool EnterScope, ParsedAttributes &OutAttrs) {
+  // Create a fake EOF so that attribute parsing won't go off the end of the
+  // attribute.
+  Token AttrEnd;
+  AttrEnd.startToken();
+  AttrEnd.setKind(tok::eof);
+  AttrEnd.setLocation(Tok.getLocation());
+  AttrEnd.setEofData(LA.Toks.data());
+  LA.Toks.push_back(AttrEnd);
+
+  // Append the current token at the end of the new token stream so that it
+  // doesn't get lost.
+  LA.Toks.push_back(Tok);
+  PP.EnterTokenStream(LA.Toks, /*DisableMacroExpansion=*/true,
+                      /*IsReinject=*/true);
+  // Drop the current token and bring the first cached one. It's the same token
+  // as when we entered this function.
+  ConsumeAnyToken(/*ConsumeCodeCompletionTok=*/true);
+
+  // TODO: Use `EnterScope`
+  (void)EnterScope;
+
+  ParsedAttributes Attrs(AttrFactory);
+
+  assert(LA.Decls.size() <= 1 &&
+         "late field attribute expects to have at most one declaration.");
+
+  // Dispatch based on the attribute and parse it
+  ParseGNUAttributeArgs(&LA.AttrName, LA.AttrNameLoc, Attrs, nullptr, nullptr,
+                        SourceLocation(), ParsedAttr::Form::GNU(), nullptr);
+
+  // Due to a parsing error, we either went over the cached tokens or
+  // there are still cached tokens left, so we skip the leftover tokens.
+  while (Tok.isNot(tok::eof))
+    ConsumeAnyToken();
+
+  // Consume the fake EOF token if it's there
+  if (Tok.is(tok::eof) && Tok.getEofData() == AttrEnd.getEofData())
+    ConsumeAnyToken();
+
+  OutAttrs.takeAllAppendingFrom(Attrs);
+}
+
 void Parser::ParseLexedCAttribute(LateParsedAttribute &LA, bool EnterScope,
                                   ParsedAttributes *OutAttrs) {
   // Create a fake EOF so that attribute parsing won't go off the end of the
@@ -4861,6 +4904,11 @@ void Parser::ParseLexedCAttribute(LateParsedAttribute &LA, bool EnterScope,
   if (OutAttrs) {
     OutAttrs->takeAllAppendingFrom(Attrs);
   }
+}
+
+void Parser::LateTypeAttrParserCallback(void *P, void *OLA, bool EnterScope, ParsedAttributes &OutAttrs) {
+  auto *LA = static_cast<LateParsedAttribute *>(OLA);
+  return ((Parser *)(P))->ParseLexedTypeAttribute(*LA, /*EnterScope=*/false, OutAttrs);
 }
 
 void Parser::ParseStructUnionBody(SourceLocation RecordLoc,
@@ -4989,10 +5037,10 @@ void Parser::ParseStructUnionBody(SourceLocation RecordLoc,
   MaybeParseGNUAttributes(attrs, &LateFieldAttrs);
 
   // Late parse field attributes if necessary.
-  ParseLexedCAttributeList(LateFieldAttrs, /*EnterScope=*/false);
-
+  // ParseLexedCAttributeList(LateFieldAttrs, /*EnterScope=*/false);
   SmallVector<Decl *, 32> FieldDecls(TagDecl->fields());
 
+  Actions.SetLateTypeAttrParser(LateTypeAttrParserCallback, this);
   Actions.ActOnFields(getCurScope(), RecordLoc, TagDecl, FieldDecls,
                       T.getOpenLocation(), T.getCloseLocation(), attrs);
   StructScope.Exit();

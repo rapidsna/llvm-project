@@ -5428,6 +5428,10 @@ static TypeSourceInfo *GetFullTypeForDeclarator(TypeProcessingState &state,
     processTypeAttrs(state, T, TAL_DeclChunk, DeclType.getAttrs(),
                      S.CUDA().IdentifyTarget(D.getAttributes()));
 
+    for (auto *OpaqueLA : DeclType.LateAttrList) {
+      T = Context.getCountAttributedType(T, OpaqueLA);
+    }
+
     if (DeclType.Kind != DeclaratorChunk::Paren) {
       if (ExpectNoDerefChunk && !IsNoDerefableChunk(DeclType))
         S.Diag(DeclType.Loc, diag::warn_noderef_on_non_pointer_or_array);
@@ -6359,6 +6363,7 @@ GetTypeSourceInfoForDeclarator(TypeProcessingState &State,
         break;
       }
 
+      case TypeLoc::CountAttributed:
       case TypeLoc::Adjusted:
       case TypeLoc::BTFTagAttributed: {
         CurrTL = CurrTL.getNextTypeLoc().getUnqualifiedLoc();

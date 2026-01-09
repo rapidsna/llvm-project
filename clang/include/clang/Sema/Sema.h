@@ -1329,6 +1329,15 @@ public:
     OpaqueParser = P;
   }
 
+  typedef void LateTypeAttrParserCB(void *P, void *LA, bool EnterScope, ParsedAttributes &OutAttrs);
+  LateTypeAttrParserCB *LateTypeAttrParser;
+  void *OpaqueTypeAttrParser;
+
+  void SetLateTypeAttrParser(LateTypeAttrParserCB *LAP, void *P) {
+    LateTypeAttrParser = LAP;
+    OpaqueTypeAttrParser = P;
+  }
+
   /// Callback to the parser to parse a type expressed as a string.
   std::function<TypeResult(StringRef, StringRef, SourceLocation)>
       ParseTypeFromStringCallback;
@@ -2459,8 +2468,7 @@ public:
   /// `counted_by_or_null` attribute.
   ///
   /// \returns false iff semantically valid.
-  bool CheckCountedByAttrOnField(FieldDecl *FD, Expr *E,
-                                 unsigned NestedTypeLevel, bool CountInBytes,
+  bool CheckCountedByAttrOnField(FieldDecl *FD, QualType T, Expr *E, bool CountInBytes,
                                  bool OrNull);
 
   /// Perform Bounds Safety Semantic checks for assigning to a `__counted_by` or

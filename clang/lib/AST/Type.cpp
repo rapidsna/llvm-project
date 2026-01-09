@@ -3986,6 +3986,8 @@ CountAttributedType::CountAttributedType(
     QualType Wrapped, QualType Canon, Expr *CountExpr, bool CountInBytes,
     bool OrNull, ArrayRef<TypeCoupledDeclRefInfo> CoupledDecls)
     : BoundsAttributedType(CountAttributed, Wrapped, Canon),
+      Parsed(true),
+      LateParsedAttrData(nullptr),
       CountExpr(CountExpr) {
   CountAttributedTypeBits.NumCoupledDecls = CoupledDecls.size();
   CountAttributedTypeBits.CountInBytes = CountInBytes;

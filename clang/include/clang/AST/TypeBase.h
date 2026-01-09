@@ -3437,6 +3437,9 @@ class CountAttributedType final
                                    TypeCoupledDeclRefInfo> {
   friend class ASTContext;
 
+  using LateParsedAttributeOpaquePtr = void *;
+  bool Parsed;
+  LateParsedAttributeOpaquePtr LateParsedAttrData;
   Expr *CountExpr;
   /// \p CountExpr represents the argument of __counted_by or the likes. \p
   /// CountInBytes indicates that \p CountExpr is a byte count (i.e.,
@@ -3447,6 +3450,11 @@ class CountAttributedType final
   CountAttributedType(QualType Wrapped, QualType Canon, Expr *CountExpr,
                       bool CountInBytes, bool OrNull,
                       ArrayRef<TypeCoupledDeclRefInfo> CoupledDecls);
+
+  CountAttributedType(QualType Wrapped, QualType Canon,
+                      LateParsedAttributeOpaquePtr LateParsedAttrData) : BoundsAttributedType(CountAttributed, Wrapped, Canon), Parsed(false), LateParsedAttrData(LateParsedAttrData), CountExpr(nullptr) {
+    CountAttributedTypeBits.NumCoupledDecls = 0;
+  }
 
   unsigned numTrailingObjects(OverloadToken<TypeCoupledDeclRefInfo>) const {
     return CountAttributedTypeBits.NumCoupledDecls;
@@ -3468,6 +3476,11 @@ public:
     if (isOrNull())
       return isCountInBytes() ? SizedByOrNull : CountedByOrNull;
     return isCountInBytes() ? SizedBy : CountedBy;
+  }
+
+  bool isParsed() const { return Parsed; }
+  LateParsedAttributeOpaquePtr getLateParsedAttribute() const {
+    return LateParsedAttrData;
   }
 
   void Profile(llvm::FoldingSetNodeID &ID) {

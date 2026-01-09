@@ -50,7 +50,7 @@ enum class CountedByInvalidPointeeTypeKind {
   VALID,
 };
 
-bool Sema::CheckCountedByAttrOnField(FieldDecl *FD, Expr *E, unsigned Level,
+bool Sema::CheckCountedByAttrOnField(FieldDecl *FD, QualType T, Expr *E,
                                      bool CountInBytes, bool OrNull) {
   // Check the context the attribute is used in
 
@@ -62,13 +62,7 @@ bool Sema::CheckCountedByAttrOnField(FieldDecl *FD, Expr *E, unsigned Level,
     return true;
   }
 
-  if (Level != 0) {
-    Diag(FD->getBeginLoc(), diag::err_counted_by_on_nested_pointer)
-        << Kind << FD->getSourceRange();
-    return true;
-  }
-
-  const auto FieldTy = FD->getType();
+  const auto FieldTy = T;
   if (FieldTy->isArrayType() && (CountInBytes || OrNull)) {
     Diag(FD->getBeginLoc(),
          diag::err_count_attr_not_on_ptr_or_flexible_array_member)

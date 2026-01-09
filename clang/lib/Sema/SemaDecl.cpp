@@ -11,6 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "TypeLocBuilder.h"
+#include "TreeTransform.h"
 #include "clang/AST/ASTConsumer.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/ASTLambda.h"
@@ -19664,6 +19665,71 @@ bool Sema::EntirelyFunctionPointers(const RecordDecl *Record) {
   return llvm::all_of(Record->decls(), IsFunctionPointerOrForwardDecl);
 }
 
+static QualType handleCountedByAttrField(Sema &S, QualType T, Decl *D, const ParsedAttr &AL) {
+  auto *FD = dyn_cast<FieldDecl>(D);
+  assert(FD);
+
+  auto *CountExpr = AL.getArgAsExpr(0);
+  if (!CountExpr)
+    return QualType();
+
+  bool CountInBytes;
+  bool OrNull;
+  switch (AL.getKind()) {
+  case ParsedAttr::AT_CountedBy:
+    CountInBytes = false;
+    OrNull = false;
+    break;
+  case ParsedAttr::AT_CountedByOrNull:
+    CountInBytes = false;
+    OrNull = true;
+    break;
+  case ParsedAttr::AT_SizedBy:
+    CountInBytes = true;
+    OrNull = false;
+    break;
+  case ParsedAttr::AT_SizedByOrNull:
+    CountInBytes = true;
+    OrNull = true;
+    break;
+  default:
+    llvm_unreachable("unexpected counted_by family attribute");
+  }
+
+  if (S.CheckCountedByAttrOnField(FD, T, CountExpr, CountInBytes, OrNull))
+    return QualType();
+
+  return S.BuildCountAttributedArrayOrPointerType(
+      T, CountExpr, CountInBytes, OrNull);
+}
+struct RebuildTypeWithLateParsedAttr
+  : TreeTransform<RebuildTypeWithLateParsedAttr> {
+  FieldDecl *FD;
+  RebuildTypeWithLateParsedAttr(Sema &SemaRef, FieldDecl *FD) : TreeTransform(SemaRef), FD(FD) {}
+
+  QualType TransformCountAttributedType(TypeLocBuilder &TLB, CountAttributedTypeLoc TL) {
+    const CountAttributedType *CA = TL.getTypePtr();
+    if (CA->isParsed())
+      return TransformType(TLB, TL);
+
+    assert(SemaRef.LateTypeAttrParser);
+    AttributeFactory AF{};
+    ParsedAttributes Attrs(AF);
+    SemaRef.LateTypeAttrParser(SemaRef.OpaqueTypeAttrParser, CA->getLateParsedAttribute(), true, Attrs);
+    assert(Attrs.size() == 1);
+    auto &AL = Attrs[0];
+    QualType T = handleCountedByAttrField(SemaRef, QualType(CA, 0), FD, AL);
+    if (T.isNull()) {
+      AL.setInvalid();
+      return QualType();
+    }
+
+    AL.setUsedAsTypeAttr();
+    TLB.push<CountAttributedTypeLoc>(T);
+    return T;
+  }
+};
+
 void Sema::ActOnFields(Scope *S, SourceLocation RecLoc, Decl *EnclosingDecl,
                        ArrayRef<Decl *> Fields, SourceLocation LBrac,
                        SourceLocation RBrac,
@@ -19698,6 +19764,18 @@ void Sema::ActOnFields(Scope *S, SourceLocation RecLoc, Decl *EnclosingDecl,
       if (const auto *IFD = dyn_cast<IndirectFieldDecl>(I))
         if (IFD->getDeclName())
           ++NumNamedMembers;
+    }
+  }
+
+  if (LateTypeAttrParser) {
+    for (ArrayRef<Decl *>::iterator i = Fields.begin(), end = Fields.end();
+        i != end; ++i) {
+      FieldDecl *FD = cast<FieldDecl>(*i);
+
+      RebuildTypeWithLateParsedAttr RebuildFieldType(*this, FD);
+      auto *TSI = RebuildFieldType.TransformType(FD->getTypeSourceInfo());
+      if (TSI)
+        FD->setTypeSourceInfo(TSI);
     }
   }
 
