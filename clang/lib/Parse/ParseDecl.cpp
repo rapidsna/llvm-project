@@ -3145,27 +3145,6 @@ void Parser::DistributeCLateParsedAttrs(Declarator &D, Decl *Dcl,
   if (!LateAttrs)
     return;
 
-  unsigned NestedTypeLevel = 0;
-  for (unsigned i = 0; i < D.getNumTypeObjects(); ++i) {
-    DeclaratorChunk &DC = D.getTypeObject(i);
-
-    switch (DC.Kind) {
-    case DeclaratorChunk::Pointer:
-    case DeclaratorChunk::Array:
-      break;
-    default:
-      continue;
-    }
-
-    // Extract `LateParsedAttribute *` from `DeclaratorChunk`.
-    for (auto *OpaqueLA : DC.LateAttrList) {
-      auto *LA = static_cast<LateParsedAttribute *>(OpaqueLA);
-      LA->NestedTypeLevel = NestedTypeLevel;
-      LateAttrs->push_back(LA);
-    }
-    NestedTypeLevel++;
-  }
-
   // Attach `Decl *` to each `LateParsedAttribute *`.
   if (Dcl) {
     for (auto *LA : *LateAttrs) {
@@ -5037,7 +5016,7 @@ void Parser::ParseStructUnionBody(SourceLocation RecordLoc,
   MaybeParseGNUAttributes(attrs, &LateFieldAttrs);
 
   // Late parse field attributes if necessary.
-  // ParseLexedCAttributeList(LateFieldAttrs, /*EnterScope=*/false);
+  ParseLexedCAttributeList(LateFieldAttrs, /*EnterScope=*/false);
   SmallVector<Decl *, 32> FieldDecls(TagDecl->fields());
 
   Actions.SetLateTypeAttrParser(LateTypeAttrParserCallback, this);

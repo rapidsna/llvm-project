@@ -19716,15 +19716,22 @@ struct RebuildTypeWithLateParsedAttr
     AttributeFactory AF{};
     ParsedAttributes Attrs(AF);
     SemaRef.LateTypeAttrParser(SemaRef.OpaqueTypeAttrParser, CA->getLateParsedAttribute(), true, Attrs);
+
     assert(Attrs.size() == 1);
     auto &AL = Attrs[0];
-    QualType T = handleCountedByAttrField(SemaRef, QualType(CA, 0), FD, AL);
+
+    QualType InnerType = TransformType(TLB, TL.getInnerLoc());
+    if (InnerType.isNull())
+      return QualType();
+
+    QualType T = handleCountedByAttrField(SemaRef, InnerType, FD, AL);
     if (T.isNull()) {
       AL.setInvalid();
       return QualType();
     }
 
     AL.setUsedAsTypeAttr();
+
     TLB.push<CountAttributedTypeLoc>(T);
     return T;
   }

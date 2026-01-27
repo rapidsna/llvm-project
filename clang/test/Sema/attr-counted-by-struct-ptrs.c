@@ -158,7 +158,7 @@ struct on_member_pointer_fn_ptr_ty_ty_pos {
 struct on_member_pointer_fn_ptr_ty_ty_pos_inner {
   int count;
   // expected-error@+1{{'counted_by' attribute on nested pointer type is not allowed}}
-  void (* __counted_by(count) * fn_ptr)(void);
+  void (* __counted_by(count) * fn_ptr)(void);  // FIXME
 };
 
 struct on_member_pointer_struct_with_vla_ty_pos {
@@ -179,7 +179,7 @@ struct on_member_pointer_struct_with_annotated_vla_ty_pos {
 struct on_nested_pointer_inner {
   int count;
   // expected-error@+1{{'counted_by' attribute on nested pointer type is not allowed}}
-  struct size_known *__counted_by(count) *buf;
+  struct size_known *__counted_by(count) *buf;  // FIXME
 };
 
 struct on_nested_pointer_outer {
