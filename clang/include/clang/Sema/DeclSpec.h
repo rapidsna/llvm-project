@@ -210,6 +210,12 @@ public:
   unsigned location_size() const { return Builder.getBuffer().second; }
 };
 
+/// Stores pointers to `Parser::LateParsedAttribute`. We use `void*` here
+/// because `LateParsedAttribute` is a nested struct of `class Parser` and
+/// cannot be forward-declared.
+using LateAttrOpaquePtr = void *;
+using LateAttrListTy = SmallVector<LateAttrOpaquePtr, 1>;
+
 /// Captures information about "declaration specifiers".
 ///
 /// "Declaration specifiers" encompasses storage-class-specifiers,
@@ -390,6 +396,9 @@ private:
 
   // attributes.
   ParsedAttributes Attrs;
+
+  // late attributes
+  LateAttrListTy LateParsedAttrs;
 
   // Scope specifier for the type spec, if applicable.
   CXXScopeSpec TypeScope;
@@ -843,6 +852,10 @@ public:
   ParsedAttributes &getAttributes() { return Attrs; }
   const ParsedAttributes &getAttributes() const { return Attrs; }
 
+  LateAttrListTy *getLateAttributePtr() { return &LateParsedAttrs;  }
+  LateAttrListTy &getLateAttributes() { return LateParsedAttrs;  }
+  const LateAttrListTy &getLateAttributes() const { return LateParsedAttrs;  }
+
   void takeAttributesAppendingingFrom(ParsedAttributes &attrs) {
     Attrs.takeAllAppendingFrom(attrs);
   }
@@ -1237,12 +1250,6 @@ struct DeclaratorChunk {
   }
 
   ParsedAttributesView AttrList;
-
-  /// Stores pointers to `Parser::LateParsedAttribute`. We use `void*` here
-  /// because `LateParsedAttribute` is a nested struct of `class Parser` and
-  /// cannot be forward-declared.
-  using LateAttrOpaquePtr = void *;
-  using LateAttrListTy = SmallVector<LateAttrOpaquePtr, 1>;
   LateAttrListTy LateAttrList;
 
   struct PointerTypeInfo {
@@ -2334,7 +2341,7 @@ public:
   void
   AddTypeInfo(const DeclaratorChunk &TI, ParsedAttributes &&attrs,
               SourceLocation EndLoc,
-              ArrayRef<DeclaratorChunk::LateAttrOpaquePtr> LateAttrs = {}) {
+              ArrayRef<LateAttrOpaquePtr> LateAttrs = {}) {
     DeclTypeInfo.push_back(TI);
     DeclTypeInfo.back().getAttrs().prepend(attrs.begin(), attrs.end());
     getAttributePool().takeAllFrom(attrs.getPool());

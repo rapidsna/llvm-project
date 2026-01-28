@@ -6322,7 +6322,7 @@ void Parser::ParseTypeQualifierListOpt(
       if (AttrReqs & AR_GNUAttributesParsed ||
           AttrReqs & AR_GNUAttributesParsedAndRejected) {
 
-        assert(!LateAttrs || LateAttrs->lateAttrParseExperimentalExtOnly());
+        LateParsedAttrList *LateAttrs = reinterpret_cast<LateParsedAttrList*>(DS.getLateAttributePtr());
         ParseGNUAttributes(DS.getAttributes(), LateAttrs);
         continue; // do *not* consume the next token!
       }
@@ -6477,6 +6477,8 @@ void Parser::ParseDeclaratorInternal(Declarator &D,
     DeclSpec DS(AttrFactory);
     ParseTypeQualifierListOpt(DS);
 
+    assert(DS.getLateAttributes().empty());
+
     D.AddTypeInfo(
         DeclaratorChunk::getPipe(DS.getTypeQualifiers(), DS.getPipeLoc()),
         std::move(DS.getAttributes()), SourceLocation());
@@ -6504,39 +6506,29 @@ void Parser::ParseDeclaratorInternal(Declarator &D,
                     ((D.getContext() != DeclaratorContext::CXXNew)
                          ? AR_GNUAttributesParsed
                          : AR_GNUAttributesParsedAndRejected);
-    LateParsedAttrList LateAttrs(/*PSoon=*/true,
-                                 /*LateAttrParseExperimentalExtOnly=*/true);
+    LateParsedAttrList *LateAttrs = reinterpret_cast<LateParsedAttrList*>(DS.getLateAttributePtr());
     ParseTypeQualifierListOpt(DS, Reqs, /*AtomicOrPtrauthAllowed=*/true,
-                              !D.mayOmitIdentifier(), {}, &LateAttrs);
+                              !D.mayOmitIdentifier(), {}, LateAttrs);
     D.ExtendWithDeclSpec(DS);
 
     // Recursively parse the declarator.
     Actions.runWithSufficientStackSpace(
         D.getBeginLoc(), [&] { ParseDeclaratorInternal(D, DirectDeclParser); });
     if (Kind == tok::star) {
-      DeclaratorChunk::LateAttrListTy OpaqueLateAttrList;
-      if (getLangOpts().ExperimentalLateParseAttributes && !LateAttrs.empty()) {
-        // TODO: Support `counted_by` in function parameters, return types, and
-        // other contexts (Issue #167365).
-        if (!D.isFunctionDeclarator()) {
-          for (LateParsedAttribute *LA : LateAttrs) {
-            OpaqueLateAttrList.push_back(LA);
-          }
-        }
-        LateAttrs.clear();
-      }
       // Remember that we parsed a pointer type, and remember the type-quals.
       D.AddTypeInfo(DeclaratorChunk::getPointer(
                         DS.getTypeQualifiers(), Loc, DS.getConstSpecLoc(),
                         DS.getVolatileSpecLoc(), DS.getRestrictSpecLoc(),
                         DS.getAtomicSpecLoc(), DS.getUnalignedSpecLoc()),
                     std::move(DS.getAttributes()), SourceLocation(),
-                    OpaqueLateAttrList);
-    } else
+                    std::move(DS.getLateAttributes()));
+    } else {
+      assert(DS.getLateAttributes().empty());
       // Remember that we parsed a Block type, and remember the type-quals.
       D.AddTypeInfo(
           DeclaratorChunk::getBlockPointer(DS.getTypeQualifiers(), Loc),
           std::move(DS.getAttributes()), SourceLocation());
+    }
   } else {
     // Is a reference
     DeclSpec DS(AttrFactory);
@@ -6588,6 +6580,8 @@ void Parser::ParseDeclaratorInternal(Declarator &D,
         // declarator: reference collapsing will take care of it.
       }
     }
+
+    assert(DS.getLateAttributes().empty());
 
     // Remember that we parsed a reference type.
     D.AddTypeInfo(DeclaratorChunk::getReference(DS.getTypeQualifiers(), Loc,
