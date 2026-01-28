@@ -1241,7 +1241,7 @@ ExprResult Parser::ParseLambdaExpressionAfterIntroducer(
                           /*ArgsUnion=*/nullptr,
                           /*numArgs=*/0, tok::kw___noinline__);
       } else if (Tok.is(tok::kw___attribute))
-        ParseGNUAttributes(Attributes, /*LatePArsedAttrList=*/nullptr, &D);
+        ParseGNUAttributes(Attributes, /*LatePArsedAttrList=*/nullptr, /*LateParsedAttrTypeList=*/nullptr,  &D);
       else
         break;
     }

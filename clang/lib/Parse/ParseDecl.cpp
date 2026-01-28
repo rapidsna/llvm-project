@@ -107,6 +107,20 @@ static bool IsAttributeLateParsedStandard(const IdentifierInfo &II) {
 #undef CLANG_ATTR_LATE_PARSED_LIST
 }
 
+/// returns true iff attribute is annotated with `LateAttrParseExperimentalExt`
+/// in `Attr.td`.
+static bool IsAttributeTypeAttr(const IdentifierInfo &II) {
+#define ATTR(NAME)
+#define DECL_OR_TYPE_ATTR(NAME) .Case(# NAME, 1)
+#define TYPE_ATTR(NAME) .Case(# NAME, 1)
+  return llvm::StringSwitch<bool>(normalizeAttrName(II.getName()))
+#include "clang/Basic/AttrList.inc"
+      .Default(false);
+#undef DECL_OR_TYPE_ATTR
+#undef TYPE_ATTR
+#undef ATTR
+}
+
 /// Check if the a start and end source location expand to the same macro.
 static bool FindLocsWithCommonFileID(Preprocessor &PP, SourceLocation StartLoc,
                                      SourceLocation EndLoc) {
@@ -125,7 +139,8 @@ static bool FindLocsWithCommonFileID(Preprocessor &PP, SourceLocation StartLoc,
 }
 
 void Parser::ParseAttributes(unsigned WhichAttrKinds, ParsedAttributes &Attrs,
-                             LateParsedAttrList *LateAttrs) {
+                             LateParsedAttrList *LateAttrs,
+                             LateParsedAttrList *LateTypeAttrs) {
   bool MoreToParse;
   do {
     // Assume there's nothing left to parse, but if any attributes are in fact
@@ -134,7 +149,7 @@ void Parser::ParseAttributes(unsigned WhichAttrKinds, ParsedAttributes &Attrs,
     if (WhichAttrKinds & PAKM_CXX11)
       MoreToParse |= MaybeParseCXX11Attributes(Attrs);
     if (WhichAttrKinds & PAKM_GNU)
-      MoreToParse |= MaybeParseGNUAttributes(Attrs, LateAttrs);
+      MoreToParse |= MaybeParseGNUAttributes(Attrs, LateAttrs, LateTypeAttrs);
     if (WhichAttrKinds & PAKM_Declspec)
       MoreToParse |= MaybeParseMicrosoftDeclSpecs(Attrs);
   } while (MoreToParse);
@@ -143,6 +158,7 @@ void Parser::ParseAttributes(unsigned WhichAttrKinds, ParsedAttributes &Attrs,
 bool Parser::ParseSingleGNUAttribute(ParsedAttributes &Attrs,
                                      SourceLocation &EndLoc,
                                      LateParsedAttrList *LateAttrs,
+                                     LateParsedAttrList *LateTypeAttrs,
                                      Declarator *D) {
   IdentifierInfo *AttrName = Tok.getIdentifierInfo();
   if (!AttrName)
@@ -155,6 +171,8 @@ bool Parser::ParseSingleGNUAttribute(ParsedAttributes &Attrs,
                  ParsedAttr::Form::GNU());
     return false;
   }
+
+  assert((LateTypeAttrs ? !!LateAttrs : false) && "LateTypeAttrs exist but LateAttrs isn't!");
 
   bool LateParse = false;
   if (!LateAttrs)
@@ -184,7 +202,11 @@ bool Parser::ParseSingleGNUAttribute(ParsedAttributes &Attrs,
   // Handle attributes with arguments that require late parsing.
   LateParsedAttribute *LA =
       new LateParsedAttribute(this, *AttrName, AttrNameLoc);
-  LateAttrs->push_back(LA);
+
+  if (IsAttributeTypeAttr(*AttrName) && LateTypeAttrs)
+    LateTypeAttrs->push_back(LA);
+  else
+    LateAttrs->push_back(LA);
 
   // Attributes in a class are parsed at the end of the class, along
   // with other late-parsed declarations.
@@ -207,7 +229,7 @@ bool Parser::ParseSingleGNUAttribute(ParsedAttributes &Attrs,
 }
 
 void Parser::ParseGNUAttributes(ParsedAttributes &Attrs,
-                                LateParsedAttrList *LateAttrs, Declarator *D) {
+                                LateParsedAttrList *LateAttrs, LateParsedAttrList *LateTypeAttrs, Declarator *D) {
   assert(Tok.is(tok::kw___attribute) && "Not a GNU attribute list!");
 
   SourceLocation StartLoc = Tok.getLocation();
@@ -243,7 +265,7 @@ void Parser::ParseGNUAttributes(ParsedAttributes &Attrs,
         break;
       }
 
-      if (ParseSingleGNUAttribute(Attrs, EndLoc, LateAttrs, D))
+      if (ParseSingleGNUAttribute(Attrs, EndLoc, LateAttrs, LateTypeAttrs, D))
         break;
     } while (Tok.is(tok::comma));
 
