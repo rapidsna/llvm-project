@@ -6322,6 +6322,7 @@ void Parser::ParseTypeQualifierListOpt(
       if (AttrReqs & AR_GNUAttributesParsed ||
           AttrReqs & AR_GNUAttributesParsedAndRejected) {
 
+        // FIXME: Late parse only when some flag is set.
         LateParsedAttrList *LateAttrs = reinterpret_cast<LateParsedAttrList*>(DS.getLateAttributePtr());
         ParseGNUAttributes(DS.getAttributes(), LateAttrs);
         continue; // do *not* consume the next token!
@@ -6506,6 +6507,8 @@ void Parser::ParseDeclaratorInternal(Declarator &D,
                     ((D.getContext() != DeclaratorContext::CXXNew)
                          ? AR_GNUAttributesParsed
                          : AR_GNUAttributesParsedAndRejected);
+    // FIXME: Don't need to pass parameter. It's not used. This is the path
+    // where it is experimental only.
     LateParsedAttrList *LateAttrs = reinterpret_cast<LateParsedAttrList*>(DS.getLateAttributePtr());
     ParseTypeQualifierListOpt(DS, Reqs, /*AtomicOrPtrauthAllowed=*/true,
                               !D.mayOmitIdentifier(), {}, LateAttrs);
