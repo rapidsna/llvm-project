@@ -2167,36 +2167,32 @@ private:
   ///
   /// Such situations should use the specific attribute parsing functionality.
   void ParseAttributes(unsigned WhichAttrKinds, ParsedAttributes &Attrs,
-                       LateParsedAttrList *LateAttrs = nullptr,
-                       LateParsedAttrList *LateTypeAttrs = nullptr);
+                       LateParsedAttrList *LateAttrs = nullptr);
   /// \brief Possibly parse attributes based on what syntaxes are desired,
   /// allowing for the order to vary.
   bool MaybeParseAttributes(unsigned WhichAttrKinds, ParsedAttributes &Attrs,
-                            LateParsedAttrList *LateAttrs = nullptr,
-                            LateParsedAttrList *LateTypeAttrs = nullptr) {
+                            LateParsedAttrList *LateAttrs = nullptr) {
     if (Tok.isOneOf(tok::kw___attribute, tok::kw___declspec) ||
         isAllowedCXX11AttributeSpecifier()) {
-      ParseAttributes(WhichAttrKinds, Attrs, LateAttrs, LateTypeAttrs);
+      ParseAttributes(WhichAttrKinds, Attrs, LateAttrs);
       return true;
     }
     return false;
   }
 
   void MaybeParseGNUAttributes(Declarator &D,
-                               LateParsedAttrList *LateAttrs = nullptr,
-                               LateParsedAttrList *LateTypeAttrs = nullptr) {
+                               LateParsedAttrList *LateAttrs = nullptr) {
     if (Tok.is(tok::kw___attribute)) {
       ParsedAttributes Attrs(AttrFactory);
-      ParseGNUAttributes(Attrs, LateAttrs, LateTypeAttrs, &D);
+      ParseGNUAttributes(Attrs, LateAttrs, &D);
       D.takeAttributesAppending(Attrs);
     }
   }
 
   bool MaybeParseGNUAttributes(ParsedAttributes &Attrs,
-                               LateParsedAttrList *LateAttrs = nullptr,
-                               LateParsedAttrList *LateTypeAttrs = nullptr) {
+                               LateParsedAttrList *LateAttrs = nullptr) {
     if (Tok.is(tok::kw___attribute)) {
-      ParseGNUAttributes(Attrs, LateAttrs, LateTypeAttrs);
+      ParseGNUAttributes(Attrs, LateAttrs);
       return true;
     }
     return false;
@@ -2220,7 +2216,6 @@ private:
   /// \endverbatim
   bool ParseSingleGNUAttribute(ParsedAttributes &Attrs, SourceLocation &EndLoc,
                                LateParsedAttrList *LateAttrs = nullptr,
-                               LateParsedAttrList *LateTypeAttrs = nullptr,
                                Declarator *D = nullptr);
 
   /// ParseGNUAttributes - Parse a non-empty attributes list.
@@ -2268,7 +2263,6 @@ private:
   /// We follow the C++ model, but don't allow junk after the identifier.
   void ParseGNUAttributes(ParsedAttributes &Attrs,
                           LateParsedAttrList *LateAttrs = nullptr,
-                          LateParsedAttrList *LateTypeAttrs = nullptr,
                           Declarator *D = nullptr);
 
   /// Parse the arguments to a parameterized GNU attribute or
