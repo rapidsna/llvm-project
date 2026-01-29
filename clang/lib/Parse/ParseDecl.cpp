@@ -107,6 +107,20 @@ static bool IsAttributeLateParsedStandard(const IdentifierInfo &II) {
 #undef CLANG_ATTR_LATE_PARSED_LIST
 }
 
+/// returns true iff attribute is annotated with `LateAttrParseExperimentalExt`
+/// in `Attr.td`.
+static bool IsAttributeTypeAttr(const IdentifierInfo &II) {
+#define ATTR(NAME)
+#define DECL_OR_TYPE_ATTR(NAME) .Case(# NAME, 1)
+#define TYPE_ATTR(NAME) .Case(# NAME, 1)
+  return llvm::StringSwitch<bool>(normalizeAttrName(II.getName()))
+#include "clang/Basic/AttrList.inc"
+      .Default(false);
+#undef DECL_OR_TYPE_ATTR
+#undef TYPE_ATTR
+#undef ATTR
+}
+
 /// Check if the a start and end source location expand to the same macro.
 static bool FindLocsWithCommonFileID(Preprocessor &PP, SourceLocation StartLoc,
                                      SourceLocation EndLoc) {
