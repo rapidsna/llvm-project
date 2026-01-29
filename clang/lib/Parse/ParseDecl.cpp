@@ -6531,7 +6531,16 @@ void Parser::ParseDeclaratorInternal(Declarator &D,
                          : AR_GNUAttributesParsedAndRejected);
     // FIXME: Don't need to pass parameter. It's not used. This is the path
     // where it is experimental only.
-    LateParsedAttrList *LateAttrs = reinterpret_cast<LateParsedAttrList*>(DS.getLateAttributePtr());
+    // FIXME: Still don't know whether this is the right context to do late parsing. Is it okay?
+    // You don't want to do late parsing if it's a variable declaration.
+    // You can probably look at the DeclaratorContext!
+    bool LateParsingContext = D.getContext() == DeclaratorContext::Member ||
+        D.getContext() == DeclaratorContext::Prototype;
+    LateParsedAttrList *LateAttrs =
+        LateParsingContext
+            ? reinterpret_cast<LateParsedAttrList *>(DS.getLateAttributePtr())
+            : nullptr;
+
     ParseTypeQualifierListOpt(DS, Reqs, /*AtomicOrPtrauthAllowed=*/true,
                               !D.mayOmitIdentifier(), {}, LateAttrs);
     D.ExtendWithDeclSpec(DS);
