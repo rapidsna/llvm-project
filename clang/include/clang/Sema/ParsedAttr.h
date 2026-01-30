@@ -19,6 +19,7 @@
 #include "clang/Basic/Diagnostic.h"
 #include "clang/Basic/ParsedAttrInfo.h"
 #include "clang/Basic/SourceLocation.h"
+#include "clang/Sema/DeclSpec.h"
 #include "clang/Sema/Ownership.h"
 #include "llvm/ADT/PointerUnion.h"
 #include "llvm/ADT/SmallVector.h"
