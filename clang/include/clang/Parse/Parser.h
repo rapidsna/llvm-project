@@ -2409,8 +2409,7 @@ private:
                                  SourceLocation ScopeLoc,
                                  ParsedAttr::Form Form);
 
-  void DistributeCLateParsedAttrs(Declarator &D, Decl *Dcl,
-                                  LateParsedAttrList *LateAttrs);
+  void DistributeCLateParsedAttrs(Decl *Dcl, LateParsedAttrList *LateAttrs);
 
   /// Bounds attributes (e.g., counted_by):
   /// \verbatim
