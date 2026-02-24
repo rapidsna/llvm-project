@@ -124,6 +124,17 @@ static bool IsAttributeArgsParsedInFunctionScope(const IdentifierInfo &II) {
 #undef CLANG_ATTR_PARSE_ARGS_IN_FUNCTION_SCOPE_LIST
 }
 
+/// Returns true iff the attribute kind corresponds to a TypeAttr or
+/// DeclOrTypeAttr in Attr.td. Only valid for parsed attribute kinds (those
+/// with ParsedAttr::AT_* enum values); implicitly-created type attributes
+/// (SemaHandler=0, Spellings=[]) are never parsed and never reach here.
+static bool IsAttributeTypeAttr(ParsedAttr::Kind Kind) {
+  const auto &Infos = ParsedAttrInfo::getAllBuiltin();
+  if ((size_t)Kind < Infos.size())
+    return Infos[Kind]->IsType;
+  return false;
+}
+
 /// Check if the a start and end source location expand to the same macro.
 static bool FindLocsWithCommonFileID(Preprocessor &PP, SourceLocation StartLoc,
                                      SourceLocation EndLoc) {
@@ -173,6 +184,9 @@ bool Parser::ParseSingleGNUAttribute(ParsedAttributes &Attrs,
     return false;
   }
 
+  ParsedAttr::Kind AttrKind = ParsedAttr::getParsedKind(
+      AttrName, nullptr, ParsedAttr::Form::GNU().getSyntax());
+
   bool LateParse = false;
   if (!LateAttrs)
     LateParse = false;
@@ -181,7 +195,9 @@ bool Parser::ParseSingleGNUAttribute(ParsedAttributes &Attrs,
     // parsed for `LateAttrParseExperimentalExt` attributes. This will
     // only be late parsed if the experimental language option is enabled.
     LateParse = getLangOpts().ExperimentalLateParseAttributes &&
-                IsAttributeLateParsedExperimentalExt(*AttrName);
+                IsAttributeLateParsedExperimentalExt(*AttrName) &&
+                (IsAttributeTypeAttr(AttrKind) ||
+                 !LateAttrs->lateAttrParseTypeAttrOnly());
   } else {
     // The caller did not restrict late parsing to only
     // `LateAttrParseExperimentalExt` attributes so late parse
@@ -199,8 +215,13 @@ bool Parser::ParseSingleGNUAttribute(ParsedAttributes &Attrs,
   }
 
   // Handle attributes with arguments that require late parsing.
-  LateParsedAttribute *LA =
-      new LateParsedAttribute(this, *AttrName, AttrNameLoc);
+  // Late parsing for type attributes isn't properly supported in C++ yet.
+  LateParsedAttribute *LA = nullptr;
+  if (IsAttributeTypeAttr(AttrKind) && !getLangOpts().CPlusPlus)
+    LA = new LateParsedTypeAttribute(this, *AttrName, AttrNameLoc);
+  else
+    LA = new LateParsedAttribute(this, *AttrName, AttrNameLoc);
+
   LateAttrs->push_back(LA);
 
   // Attributes in a class are parsed at the end of the class, along
@@ -2663,7 +2684,7 @@ Decl *Parser::ParseDeclarationAfterDeclaratorAndAttributes(
   Decl *OuterDecl = nullptr;
   switch (TemplateInfo.Kind) {
   case ParsedTemplateKind::NonTemplate:
-    ThisDecl = Actions.ActOnDeclarator(getCurScope(), D);
+    ThisDecl = Actions.ActOnDeclarator(getCurScope(), D, ParseLateParsedTypeAttributeCallback);
     break;
 
   case ParsedTemplateKind::Template:
@@ -2865,12 +2886,8 @@ Decl *Parser::ParseDeclarationAfterDeclaratorAndAttributes(
 
 void Parser::ParseSpecifierQualifierList(
     DeclSpec &DS, ImplicitTypenameContext AllowImplicitTypename,
-    AccessSpecifier AS, DeclSpecContext DSC,
-    // TO_UPSTREAM(BoundsSafety)
-    LateParsedAttrList *LateAttrs) {
-  /// specifier-qualifier-list is a subset of declaration-specifiers.  Just
-  /// parse declaration-specifiers and complain about extra stuff.
-  /// TODO: diagnose attribute-specifiers and alignment-specifiers.
+    AccessSpecifier AS, DeclSpecContext DSC, LateParsedAttrList *LateAttrs) {
+  ParsedTemplateInfo TemplateInfo;
 
   /*TO_UPSTREAM(BoundsSafety) ON*/
   assert(((LateAttrs && getLangOpts().BoundsSafetyAttributes)
@@ -2879,8 +2896,16 @@ void Parser::ParseSpecifierQualifierList(
          "Experimental late parsing must be enabled for BoundsSafety");
   /*TO_UPSTREAM(BoundsSafety) OFF*/
 
-  ParsedTemplateInfo TemplateInfo;
-  // TO_UPSTREAM(BoundsSafety): Pass LateAttrs
+  if (LateAttrs)
+    assert(!std::any_of(LateAttrs->begin(), LateAttrs->end(),
+                        [&](const LateParsedAttribute *LA) {
+                          return isa<LateParsedTypeAttribute>(LA);
+                        }) &&
+           "Late type attribute carried over");
+
+  /// specifier-qualifier-list is a subset of declaration-specifiers.  Just
+  /// parse declaration-specifiers and complain about extra stuff.
+  /// TODO: diagnose attribute-specifiers and alignment-specifiers.
   ParseDeclarationSpecifiers(DS, TemplateInfo, AS, DSC, LateAttrs,
                              AllowImplicitTypename);
 
@@ -3293,14 +3318,16 @@ void Parser::DistributeCLateParsedAttrs(Declarator &D, Decl *Dcl,
   if (!LateAttrs)
     return;
 
+  // Attach `Decl *` to each `LateParsedAttribute *`.
   if (Dcl) {
-    for (auto *LateAttr : *LateAttrs) {
-      if (LateAttr->Decls.empty())
-        LateAttr->addDecl(Dcl);
+    for (auto *LA : *LateAttrs) {
+      if (LA->Decls.empty())
+        LA->addDecl(Dcl);
     }
   }
 
   /* TO_UPSTREAM(BoundsSafety) ON */
+#if 0
   unsigned NestedLevel = 0;
   struct FunctionChunkInfo {
     bool Valid = false;
@@ -3350,6 +3377,7 @@ void Parser::DistributeCLateParsedAttrs(Declarator &D, Decl *Dcl,
     NestedLevel++;
   }
   ParseLexedCAttributeList(ProtoLateAttrs, false);
+#endif
   /* TO_UPSTREAM(BoundsSafety) OFF */
 }
 
@@ -3425,15 +3453,6 @@ void Parser::ParseBoundsAttribute(IdentifierInfo &AttrName,
 
   ArgExprs.push_back(ArgExpr.get());
   Parens.consumeClose();
-
-  ASTContext &Ctx = Actions.getASTContext();
-
-  /* TO_UPSTREAM(BoundsSafety) ON */
-  // Pass NestedTypeLevel
-  ArgExprs.push_back(IntegerLiteral::Create(
-      Ctx, llvm::APInt(Ctx.getTypeSize(Ctx.getSizeType()), NestedTypeLevel),
-      Ctx.getSizeType(), SourceLocation()));
-  /* TO_UPSTREAM(BoundsSafety) OFF */
 
   Attrs.addNew(&AttrName, SourceRange(AttrNameLoc, Parens.getCloseLocation()),
                AttributeScopeInfo(), ArgExprs.data(), ArgExprs.size(), Form);
@@ -3672,6 +3691,10 @@ void Parser::ParseDeclarationSpecifiers(
         }
 
         DS.takeAttributesAppendingingFrom(attrs);
+      }
+
+      if (LateAttrs) {
+        Parser::TakeTypeAttrsAppendingFrom(DS.getLateAttributes(), *LateAttrs);
       }
 
       // If this is not a declaration specifier token, we're done reading decl
@@ -4206,7 +4229,6 @@ void Parser::ParseDeclarationSpecifiers(
     case tok::kw___declspec:
       ParseAttributes(PAKM_GNU | PAKM_Declspec, DS.getAttributes(), LateAttrs);
       continue;
-
     // Microsoft single token adornments.
     case tok::kw___forceinline: {
       isInvalid = DS.setFunctionSpecForceInline(Loc, PrevSpec, DiagID);
@@ -4966,7 +4988,6 @@ void Parser::ParseStructDeclaration(
 
   // Parse the common specifier-qualifiers-list piece.
   ParseSpecifierQualifierList(DS, AS_none, DeclSpecContext::DSC_normal,
-                              // TO_UPSTREAM(BoundsSafety)
                               LateFieldAttrs);
 
   // If there are no declarators, this is a free-standing declaration
@@ -5010,11 +5031,6 @@ void Parser::ParseStructDeclaration(
     } else
       DeclaratorInfo.D.SetIdentifier(nullptr, Tok.getLocation());
 
-    // Here, we now know that the unnamed struct is not an anonymous struct.
-    // Report an error if a counted_by attribute refers to a field in a
-    // different named struct.
-    DiagnoseCountAttributedTypeInUnnamedAnon(DS, *this);
-
     if (TryConsumeToken(tok::colon)) {
       ExprResult Res(ParseConstantExpression());
       if (Res.isInvalid())
@@ -5052,6 +5068,7 @@ void Parser::ParseLexedCAttributeList(LateParsedAttrList &LAs,
   assert(LAs.parseSoon() &&
          "Attribute list should be marked for immediate parsing.");
   for (auto *LA : LAs) {
+    assert(!isa<LateParsedTypeAttribute>(LA));
     ParseLexedCAttribute(*LA, EnterScope, OutAttrs);
     delete LA;
   }
@@ -5099,12 +5116,8 @@ ParsedAttributes Parser::ParseLexedCAttributeTokens(LateParsedAttribute &LA,
   /* TO_UPSTREAM(BoundsSafety) OFF */
 
     // Dispatch based on the attribute and parse it
-    /* TO_UPSTREAM(BoundsSafety) ON */
-    // NestedTypeLevel is not passed in upstream
     ParseGNUAttributeArgs(&LA.AttrName, LA.AttrNameLoc, Attrs, nullptr, nullptr,
-                          SourceLocation(), ParsedAttr::Form::GNU(), nullptr,
-                          LA.NestedTypeLevel);
-    /* TO_UPSTREAM(BoundsSafety) OFF */
+                          SourceLocation(), ParsedAttr::Form::GNU(), nullptr);
 
     /* TO_UPSTREAM(BoundsSafety) ON */
     if (EnterScope) {
@@ -5257,6 +5270,18 @@ void Parser::ParseStructUnionBody(SourceLocation RecordLoc,
       // Parse all the comma separated declarators.
       ParsingDeclSpec DS(*this);
       ParseStructDeclaration(DS, CFieldCallback, &LateFieldAttrs);
+      if (DS.getTypeSpecType() == TST_struct) {
+
+        if (getLangOpts().ExperimentalLateParseAttributes) {
+          auto *RD = dyn_cast<RecordDecl>(DS.getRepAsDecl());
+          if (RD && !RD->isAnonymousStructOrUnion()) {
+            Actions.ProcessLateParsedTypeAttributesForFields(
+                RD, ParseLateParsedTypeAttributeCallback);
+          }
+        } else {
+          DiagnoseCountAttributedTypeInUnnamedAnon(DS, *this);
+        }
+      }
     } else { // Handle @defs
       ConsumeToken();
       if (!Tok.isObjCAtKeyword(tok::objc_defs)) {
@@ -5297,16 +5322,22 @@ void Parser::ParseStructUnionBody(SourceLocation RecordLoc,
 
   ParsedAttributes attrs(AttrFactory);
   // If attributes exist after struct contents, parse them.
-  MaybeParseGNUAttributes(attrs, &LateFieldAttrs);
+  MaybeParseGNUAttributes(attrs);
 
-  /* TO_UPSTREAM(BoundsSafety) ON */
   SmallVector<Decl *, 32> FieldDecls(TagDecl->fields());
+
+  // ActOnFields will transform any LateParsedAttrType placeholders into
+  // proper attributed types. The LateParsedTypeAttribute objects embedded
+  // in those placeholder types already contain everything needed (Parser
+  // pointer and cached tokens) to parse themselves.
   Actions.ActOnFields(getCurScope(), RecordLoc, TagDecl, FieldDecls,
                       T.getOpenLocation(), T.getCloseLocation(), attrs);
-  /* TO_UPSTREAM(BoundsSafety) OFF */
 
   // Late parse field attributes if necessary.
   /* TO_UPSTREAM(BoundsSafety) ON */
+  // XXX: This happens before ActOnFields in upstream. Fix upstream so
+  // it can handle expressions that include offsetof that requires the
+  // structure itself.
   if (getLangOpts().CPlusPlus) {
     // FIXME : Properly handle CXX structs
     for (auto *LateAttr : LateFieldAttrs)
@@ -5314,6 +5345,12 @@ void Parser::ParseStructUnionBody(SourceLocation RecordLoc,
   } /* TO_UPSTREAM(BoundsSafety) OFF */ else
     ParseLexedCAttributeList(LateFieldAttrs, /*EnterScope=*/false);
 
+  Scope *ParentScope = getCurScope()->getParent();
+  assert(ParentScope);
+  if (getLangOpts().ExperimentalLateParseAttributes &&
+      !ParentScope->isClassScope())
+    Actions.ProcessLateParsedTypeAttributesForFields(
+        TagDecl, ParseLateParsedTypeAttributeCallback);
   StructScope.Exit();
   Actions.ActOnTagFinishDefinition(getCurScope(), TagDecl, T.getRange());
 }
@@ -6490,9 +6527,7 @@ bool Parser::isConstructorDeclarator(bool IsUnqualified, bool DeductionGuide,
 
 void Parser::ParseTypeQualifierListOpt(
     DeclSpec &DS, unsigned AttrReqs, bool AtomicOrPtrauthAllowed,
-    bool IdentifierRequired,
-    llvm::function_ref<void()> CodeCompletionHandler,
-    // TO_UPSTREAM(BoundsSafety)
+    bool IdentifierRequired, llvm::function_ref<void()> CodeCompletionHandler,
     LateParsedAttrList *LateAttrs) {
   if ((AttrReqs & AR_CXX11AttributesParsed) &&
       isAllowedCXX11AttributeSpecifier()) {
@@ -6660,9 +6695,8 @@ void Parser::ParseTypeQualifierListOpt(
                     ? LateAttrs->lateAttrParseExperimentalExtOnly()
                     : true) &&
                "Experimental late parsing must be enabled for BoundsSafety");
-        // Upstream doesn't pass LateAttrs
-        ParseGNUAttributes(DS.getAttributes(), LateAttrs, nullptr);
         /*TO_UPSTREAM(BoundsSafety) OFF*/
+        ParseGNUAttributes(DS.getAttributes(), LateAttrs);
         continue; // do *not* consume the next token!
       }
       // otherwise, FALL THROUGH!
@@ -6732,16 +6766,6 @@ static bool isPipeDeclarator(const Declarator &D) {
 
   return false;
 }
-
-/* TO_UPSTREAM(BoundsSafety) ON */
-// Late parsing for attributes on the type position is currently only supported
-// with -fbounds-safety or -fbounds-safety-attributes.
-// Checking `BoundsSafety` is redundant because -fbounds-safety-attributes
-// is always implied with -fbounds-safety, but this is added for readability.
-static bool enableTypeAttrLateParsing(const LangOptions &LangOpts) {
-  return LangOpts.BoundsSafety || LangOpts.hasBoundsSafetyAttributes();
-}
-/* TO_UPSTREAM(BoundsSafety) OFF */
 
 void Parser::ParseDeclaratorInternal(Declarator &D,
                                      DirectDeclParseFunction DirectDeclParser) {
@@ -6828,6 +6852,8 @@ void Parser::ParseDeclaratorInternal(Declarator &D,
     DeclSpec DS(AttrFactory);
     ParseTypeQualifierListOpt(DS);
 
+    assert(DS.getLateAttributes().empty());
+
     D.AddTypeInfo(
         DeclaratorChunk::getPipe(DS.getTypeQualifiers(), DS.getPipeLoc()),
         std::move(DS.getAttributes()), SourceLocation());
@@ -6855,16 +6881,20 @@ void Parser::ParseDeclaratorInternal(Declarator &D,
                     ((D.getContext() != DeclaratorContext::CXXNew)
                          ? AR_GNUAttributesParsed
                          : AR_GNUAttributesParsedAndRejected);
-    /* TO_UPSTREAM(BoundsSafety) ON */
-    LateParsedAttrList LateAttrs(/*PSoon=*/true,
-                                 /*LateAttrParseExperimentalExtOnly=*/true);
-    LateParsedAttrList *LateAttrsPtr =
-        enableTypeAttrLateParsing(getLangOpts()) ? &LateAttrs : nullptr;
-    // Upstream doesn't pass LateAttrsPtr
+
+    // Late-parsed type attributes apply only to members and function
+    // parameters, not variables.
+    bool LateParsingContext = D.getContext() == DeclaratorContext::Member ||
+                              D.getContext() == DeclaratorContext::Prototype;
+
+    // No guard on ExperimentalLateParseAttributes is needed here;
+    // DS.getLateAttributes() already initializes with
+    // LateAttrParseExperimentalExtOnly.
+    LateParsedAttrList *LateAttrs =
+        LateParsingContext ? &DS.getLateAttributes() : nullptr;
+
     ParseTypeQualifierListOpt(DS, Reqs, /*AtomicOrPtrauthAllowed=*/true,
-                              !D.mayOmitIdentifier(),
-                              {}, LateAttrsPtr);
-    /* TO_UPSTREAM(BoundsSafety) OFF */
+                              !D.mayOmitIdentifier(), {}, LateAttrs);
     D.ExtendWithDeclSpec(DS);
 
     // Recursively parse the declarator.
@@ -6872,6 +6902,8 @@ void Parser::ParseDeclaratorInternal(Declarator &D,
         D.getBeginLoc(), [&] { ParseDeclaratorInternal(D, DirectDeclParser); });
     if (Kind == tok::star) {
       /* TO_UPSTREAM(BoundsSafety) ON */
+      // maybe we don't do it here.
+#if 0
       // We parse '__counted_by' or '__ended_by' attributes immediately
       // if this is a function declarator. We need these attributes to be
       // parsed early so we can construct the full function type before Sema
@@ -6908,10 +6940,10 @@ void Parser::ParseDeclaratorInternal(Declarator &D,
               LateAttr->NestedTypeLevel = NestedLevel;
             }
           }
-          ParseLexedCAttributeList(LateAttrs, false, &D.getAttributes());
-          LateAttrs.clear();
+          ParseLexedCAttributeList(LateAttrs, false, &D.getAttributes(), LateAttrs);
         }
       }
+#endif
       /* TO_UPSTREAM(BoundsSafety) OFF */
       // Remember that we parsed a pointer type, and remember the type-quals.
       D.AddTypeInfo(DeclaratorChunk::getPointer(
@@ -6920,12 +6952,14 @@ void Parser::ParseDeclaratorInternal(Declarator &D,
                         DS.getAtomicSpecLoc(), DS.getUnalignedSpecLoc(),
                         DS.getOverflowBehaviorLoc(), DS.isWrapSpecified()),
                     std::move(DS.getAttributes()), SourceLocation(),
-                    std::move(LateAttrs));
-    } else
+                    std::move(DS.getLateAttributes()));
+    } else {
+      assert(DS.getLateAttributes().empty());
       // Remember that we parsed a Block type, and remember the type-quals.
       D.AddTypeInfo(
           DeclaratorChunk::getBlockPointer(DS.getTypeQualifiers(), Loc),
           std::move(DS.getAttributes()), SourceLocation());
+    }
   } else {
     // Is a reference
     DeclSpec DS(AttrFactory);
@@ -6977,6 +7011,8 @@ void Parser::ParseDeclaratorInternal(Declarator &D,
         // declarator: reference collapsing will take care of it.
       }
     }
+
+    assert(DS.getLateAttributes().empty());
 
     // Remember that we parsed a reference type.
     D.AddTypeInfo(DeclaratorChunk::getReference(DS.getTypeQualifiers(), Loc,
@@ -7489,9 +7525,10 @@ void Parser::ParseParenDeclarator(Declarator &D) {
   // sort of paren this is.
   //
   ParsedAttributes attrs(AttrFactory);
+  LateParsedAttrList LateAttrs(true, true, true);
   bool RequiresArg = false;
   if (Tok.is(tok::kw___attribute)) {
-    ParseGNUAttributes(attrs);
+    ParseGNUAttributes(attrs, &LateAttrs);
 
     // We require that the argument list (if this is a non-grouping paren) be
     // present even if the attribute list was empty.
@@ -7546,7 +7583,7 @@ void Parser::ParseParenDeclarator(Declarator &D) {
     T.consumeClose();
     D.AddTypeInfo(
         DeclaratorChunk::getParen(T.getOpenLocation(), T.getCloseLocation()),
-        std::move(attrs), T.getCloseLocation());
+        std::move(attrs), T.getCloseLocation(), LateAttrs);
 
     D.setGroupingParens(hadGroupingParens);
 
@@ -7556,6 +7593,9 @@ void Parser::ParseParenDeclarator(Declarator &D) {
 
     return;
   }
+
+  assert(LateAttrs.empty() &&
+         "Late parsed type attribute on FirstParamAttr is dropped");
 
   // Okay, if this wasn't a grouping paren, it must be the start of a function
   // argument list.  Recognize that this declarator will never have an
@@ -8260,13 +8300,9 @@ void Parser::ParseBracketDeclarator(Declarator &D) {
   // Type qualifiers in an array subscript are a C99 feature.
   DeclSpec DS(AttrFactory);
   /* TO_UPSTREAM(BoundsSafety) ON */
-  LateParsedAttrList LateAttrs(/*PSoon=*/true,
-                               /*LateAttrParseExperimentalExtOnly=*/true);
-  LateParsedAttrList *LateAttrsPtr =
-      enableTypeAttrLateParsing(getLangOpts()) ? &LateAttrs : nullptr;
   ParseTypeQualifierListOpt(DS,
                             AR_CXX11AttributesParsed | AR_GNUAttributesParsed,
-                            true, false, {}, LateAttrsPtr);
+                            true, false, {}, &DS.getLateAttributes());
   /* TO_UPSTREAM(BoundsSafety) OFF */
 
   // If we haven't already read 'static', check to see if there is one after the
@@ -8329,7 +8365,8 @@ void Parser::ParseBracketDeclarator(Declarator &D) {
       DeclaratorChunk::getArray(DS.getTypeQualifiers(), StaticLoc.isValid(),
                                 isStar, NumElements.get(), T.getOpenLocation(),
                                 T.getCloseLocation()),
-      std::move(DS.getAttributes()), T.getCloseLocation(), std::move(LateAttrs));
+      std::move(DS.getAttributes()), T.getCloseLocation(),
+      std::move(DS.getLateAttributes()));
 }
 
 void Parser::ParseMisplacedBracketDeclarator(Declarator &D) {

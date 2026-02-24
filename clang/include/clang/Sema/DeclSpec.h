@@ -50,8 +50,40 @@ namespace clang {
   class Declarator;
   class OverflowBehaviorType;
   struct TemplateIdAnnotation;
+  class Parser;
+
+  /// A set of tokens that has been cached for later parsing.
+  typedef SmallVector<Token, 4> CachedTokens;
+
+  /// [class.mem]p1: "... the class is regarded as complete within
+  // Forward declaration - full definition in Parser.h
   struct LateParsedAttribute;
   struct LateParsedTypeAttribute;
+
+  // A list of late-parsed attributes.  Used by ParseGNUAttributes.
+  class LateParsedAttrList : public SmallVector<LateParsedAttribute *, 2> {
+  public:
+    LateParsedAttrList(bool PSoon = false,
+                      bool LateAttrParseExperimentalExtOnly = false,
+                      bool LateAttrParseTypeAttrOnly = false)
+        : ParseSoon(PSoon),
+          LateAttrParseExperimentalExtOnly(LateAttrParseExperimentalExtOnly),
+          LateAttrParseTypeAttrOnly(LateAttrParseTypeAttrOnly) {}
+
+    bool parseSoon() const { return ParseSoon; }
+    /// returns true iff the attribute to be parsed should only be late parsed
+    /// if it is annotated with `LateAttrParseExperimentalExt`
+    bool lateAttrParseExperimentalExtOnly() const {
+      return LateAttrParseExperimentalExtOnly;
+    }
+
+    bool lateAttrParseTypeAttrOnly() const { return LateAttrParseTypeAttrOnly; }
+
+  private:
+    bool ParseSoon; // Are we planning to parse these shortly after creation?
+    bool LateAttrParseExperimentalExtOnly;
+    bool LateAttrParseTypeAttrOnly;
+  };
 
   /// Represents a C++ nested-name-specifier or a global scope specifier.
   ///
@@ -404,6 +436,9 @@ private:
   // attributes.
   ParsedAttributes Attrs;
 
+  // late attributes
+  LateParsedAttrList LateParsedAttrs;
+
   // Scope specifier for the type spec, if applicable.
   CXXScopeSpec TypeScope;
 
@@ -480,7 +515,9 @@ public:
         FS_virtual_specified(false), FS_noreturn_specified(false),
         FriendSpecifiedFirst(false), ConstexprSpecifier(static_cast<unsigned>(
                                          ConstexprSpecKind::Unspecified)),
-        Attrs(attrFactory), writtenBS(), ObjCQualifiers(nullptr) {}
+        Attrs(attrFactory), LateParsedAttrs(true, true, true), writtenBS(),
+
+        ObjCQualifiers(nullptr) {}
 
   // storage-class-specifier
   SCS getStorageClassSpec() const { return (SCS)StorageClassSpec; }
@@ -880,6 +917,11 @@ public:
   ParsedAttributes &getAttributes() { return Attrs; }
   const ParsedAttributes &getAttributes() const { return Attrs; }
 
+  LateParsedAttrList &getLateAttributes() { return LateParsedAttrs; }
+  const LateParsedAttrList &getLateAttributes() const {
+    return LateParsedAttrs;
+  }
+
   void takeAttributesAppendingingFrom(ParsedAttributes &attrs) {
     Attrs.takeAllAppendingFrom(attrs);
   }
@@ -1252,42 +1294,14 @@ public:
   SourceLocation getEndLoc() const LLVM_READONLY { return EndLocation; }
 };
 
-/// A set of tokens that has been cached for later parsing.
-typedef SmallVector<Token, 4> CachedTokens;
-
-// A list of late-parsed attributes.  Used by ParseGNUAttributes.
-class LateParsedAttrList : public SmallVector<LateParsedAttribute *, 2> {
-public:
-  LateParsedAttrList(bool PSoon = false,
-                     bool LateAttrParseExperimentalExtOnly = false,
-                     bool LateAttrParseTypeAttrOnly = false)
-      : ParseSoon(PSoon),
-        LateAttrParseExperimentalExtOnly(LateAttrParseExperimentalExtOnly),
-        LateAttrParseTypeAttrOnly(LateAttrParseTypeAttrOnly) {}
-
-  bool parseSoon() const { return ParseSoon; }
-  /// returns true iff the attribute to be parsed should only be late parsed
-  /// if it is annotated with `LateAttrParseExperimentalExt`
-  bool lateAttrParseExperimentalExtOnly() const {
-    return LateAttrParseExperimentalExtOnly;
-  }
-
-  bool lateAttrParseTypeAttrOnly() const { return LateAttrParseTypeAttrOnly; }
-
-private:
-  bool ParseSoon; // Are we planning to parse these shortly after creation?
-  bool LateAttrParseExperimentalExtOnly;
-  bool LateAttrParseTypeAttrOnly;
-};
-
 /// One instance of this struct is used for each type in a
 /// declarator that is parsed.
 ///
 /// This is intended to be a small value object.
 struct DeclaratorChunk {
-  DeclaratorChunk()
+  DeclaratorChunk() :
       : LateAttrList(/*PSoon=*/true,
-                     /*LateAttrParseExperimentalExtOnly=*/true) {};
+                     /*LateAttrParseExperimentalExtOnly=*/true, true) {};
 
   enum {
     Pointer, Reference, Array, Function, BlockPointer, MemberPointer, Paren, Pipe
@@ -2018,6 +2032,8 @@ private:
   /// corresponding constructor parameter.
   const ParsedAttributesView &DeclarationAttrs;
 
+  LateParsedAttrList LateParsedAttrs;
+
   /// The asm label, if specified.
   Expr *AsmLabel;
 
@@ -2083,8 +2099,8 @@ public:
         Redeclaration(false), Extension(false), ObjCIvar(false),
         ObjCWeakProperty(false), InlineStorageUsed(false),
         HasInitializer(false), Attrs(DS.getAttributePool().getFactory()),
-        DeclarationAttrs(DeclarationAttrs), AsmLabel(nullptr),
-        TrailingRequiresClause(nullptr),
+        DeclarationAttrs(DeclarationAttrs), LateParsedAttrs(true, true, true),
+        AsmLabel(nullptr), TrailingRequiresClause(nullptr),
         InventedTemplateParameterList(nullptr) {
     assert(llvm::all_of(DeclarationAttrs,
                         [](const ParsedAttr &AL) {
@@ -2743,6 +2759,11 @@ public:
 
   const ParsedAttributesView &getDeclarationAttributes() const {
     return DeclarationAttrs;
+  }
+
+  LateParsedAttrList &getLateAttributes() { return LateParsedAttrs; }
+  const LateParsedAttrList &getLateAttributes() const {
+    return LateParsedAttrs;
   }
 
   /// hasAttributes - do we contain any attributes?

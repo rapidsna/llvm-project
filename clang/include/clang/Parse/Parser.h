@@ -284,6 +284,8 @@ public:
   friend class PoisonSEHIdentifiersRAIIObject;
   friend class ParenBraceBracketBalancer;
   friend class BalancedDelimiterTracker;
+  friend struct LateParsedAttribute;
+  friend struct LateParsedTypeAttribute;
 
   Parser(Preprocessor &PP, Sema &Actions, bool SkipFunctionBodies);
   ~Parser() override;
@@ -1963,11 +1965,10 @@ private:
       DeclSpec &DS, AccessSpecifier AS, DeclSpecContext DSContext,
       LateParsedAttrList *LateAttrs = nullptr);
 
-  void ParseSpecifierQualifierList(
-      DeclSpec &DS, AccessSpecifier AS = AS_none,
-      DeclSpecContext DSC = DeclSpecContext::DSC_normal,
-      // TO_UPSTREAM(BoundsSafety)
-      LateParsedAttrList *LateAttrs = nullptr) {
+  void
+  ParseSpecifierQualifierList(DeclSpec &DS, AccessSpecifier AS = AS_none,
+                              DeclSpecContext DSC = DeclSpecContext::DSC_normal,
+                              LateParsedAttrList *LateAttrs = nullptr) {
     ParseSpecifierQualifierList(DS, getImplicitTypenameContext(DSC), AS, DSC,
                                 LateAttrs);
   }
@@ -1980,12 +1981,12 @@ private:
   /// [GNU]    attributes     specifier-qualifier-list[opt]
   /// \endverbatim
   ///
-  void ParseSpecifierQualifierList(
-      DeclSpec &DS, ImplicitTypenameContext AllowImplicitTypename,
-      AccessSpecifier AS = AS_none,
-      DeclSpecContext DSC = DeclSpecContext::DSC_normal,
-      // TO_UPSTREAM(BoundsSafety)
-      LateParsedAttrList *LateAttrs = nullptr);
+  void
+  ParseSpecifierQualifierList(DeclSpec &DS,
+                              ImplicitTypenameContext AllowImplicitTypename,
+                              AccessSpecifier AS = AS_none,
+                              DeclSpecContext DSC = DeclSpecContext::DSC_normal,
+                              LateParsedAttrList *LateAttrs = nullptr);
 
   /// ParseEnumSpecifier
   /// \verbatim
@@ -2257,6 +2258,8 @@ private:
       ParsedAttributes Attrs(AttrFactory);
       ParseGNUAttributes(Attrs, LateAttrs, &D);
       D.takeAttributesAppending(Attrs);
+      if (LateAttrs)
+        Parser::TakeTypeAttrsAppendingFrom(D.getLateAttributes(), *LateAttrs);
     }
   }
 
@@ -2715,8 +2718,7 @@ private:
   void ParseTypeQualifierListOpt(
       DeclSpec &DS, unsigned AttrReqs = AR_AllAttributesParsed,
       bool AtomicOrPtrauthAllowed = true, bool IdentifierRequired = false,
-      llvm::function_ref<void()> CodeCompletionHandler =
-      {}, // TO_UPSTREAM(BoundsSafety)
+      llvm::function_ref<void()> CodeCompletionHandler = {},
       LateParsedAttrList *LateAttrs = nullptr);
 
   /// ParseDirectDeclarator
@@ -8203,6 +8205,15 @@ private:
   void ParseLateTemplatedFuncDef(LateParsedTemplate &LPT);
 
   static void LateTemplateParserCallback(void *P, LateParsedTemplate &LPT);
+
+  /// Callbacks for Sema to interact with late-parsed type attributes.
+  static void ParseLateParsedTypeAttributeCallback(LateParsedTypeAttribute *LTA,
+                                                   ParsedAttributes *OutAttrs);
+  static SourceLocation
+  GetLateParsedAttributeLocationCallback(const LateParsedTypeAttribute *LTA);
+  static bool ProcessLateParsedTypeAttrCallback(LateParsedAttribute *LA,
+                                                QualType &type,
+                                                unsigned pointerNestLevel);
 
   /// We've parsed something that could plausibly be intended to be a template
   /// name (\p LHS) followed by a '<' token, and the following code can't
