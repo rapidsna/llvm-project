@@ -6657,13 +6657,15 @@ void Parser::ParseDeclaratorInternal(Declarator &D,
                     ((D.getContext() != DeclaratorContext::CXXNew)
                          ? AR_GNUAttributesParsed
                          : AR_GNUAttributesParsedAndRejected);
-    // FIXME: Don't need to pass parameter. It's not used. This is the path
-    // where it is experimental only.
-    // FIXME: Still don't know whether this is the right context to do late
-    // parsing. Is it okay? You don't want to do late parsing if it's a variable
-    // declaration. You can probably look at the DeclaratorContext!
+
+    // Late-parsed type attributes apply only to members and function
+    // parameters, not variables.
     bool LateParsingContext = D.getContext() == DeclaratorContext::Member ||
                               D.getContext() == DeclaratorContext::Prototype;
+
+    // No guard on ExperimentalLateParseAttributes is needed here;
+    // DS.getLateAttributes() already initializes with
+    // LateAttrParseExperimentalExtOnly.
     LateParsedAttrList *LateAttrs =
         LateParsingContext ? &DS.getLateAttributes() : nullptr;
 
