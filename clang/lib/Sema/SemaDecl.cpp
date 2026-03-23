@@ -19871,7 +19871,7 @@ struct RebuildTypeWithLateParsedAttr
 
     // Invoke the parser callback to parse and consume the cached tokens.
     // ParseCallback is also responsible for deleting LTA.
-    assert(!!ParseCallback);
+    assert(ParseCallback);
     ParseCallback(LTA, &Attrs);
 
     // Invalid argument
