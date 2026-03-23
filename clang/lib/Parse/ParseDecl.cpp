@@ -5144,7 +5144,7 @@ void Parser::ParseStructUnionBody(SourceLocation RecordLoc,
   // non-anonymous records are handled immediately after their declaration is
   // parsed, which is when it is known whether the record is anonymous.
   if (getLangOpts().ExperimentalLateParseAttributes &&
-      !ParentScope->getEntity()->isRecord())
+      !ParentScope->isClassScope())
     Actions.ProcessLateParsedTypeAttributes(
         TagDecl, ParseLateParsedTypeAttributeCallback);
   StructScope.Exit();
