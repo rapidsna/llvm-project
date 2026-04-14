@@ -4885,6 +4885,72 @@ void Parser::ParseLexedCAttribute(LateParsedAttribute &LA, bool EnterScope,
   }
 }
 
+void Parser::ParseLexedTypeAttribute(LateParsedTypeAttribute &LA,
+                                     bool EnterScope,
+                                     ParsedAttributes &OutAttrs) {
+  // Create a fake EOF so that attribute parsing won't go off the end of the
+  // attribute.
+  Token AttrEnd;
+  AttrEnd.startToken();
+  AttrEnd.setKind(tok::eof);
+  AttrEnd.setLocation(Tok.getLocation());
+  AttrEnd.setEofData(LA.Toks.data());
+  LA.Toks.push_back(AttrEnd);
+
+  // Append the current token at the end of the new token stream so that it
+  // doesn't get lost.
+  LA.Toks.push_back(Tok);
+  PP.EnterTokenStream(LA.Toks, /*DisableMacroExpansion=*/true,
+                      /*IsReinject=*/true);
+  // Drop the current token and bring the first cached one. It's the same token
+  // as when we entered this function.
+  ConsumeAnyToken(/*ConsumeCodeCompletionTok=*/true);
+
+  // Note: EnterScope parameter is not used here. Type attributes are parsed
+  // in the context where ActOnFields is called, which already has the proper
+  // scope established. The actual semantic analysis happens during the
+  // RebuildTypeWithLateParsedAttr transformation, not during token parsing.
+  (void)EnterScope;
+
+  ParsedAttributes Attrs(AttrFactory);
+
+  assert(LA.Decls.size() <= 1 &&
+         "late field attribute expects to have at most one declaration.");
+
+  // Dispatch based on the attribute and parse it
+  ParseGNUAttributeArgs(&LA.AttrName, LA.AttrNameLoc, Attrs, nullptr, nullptr,
+                        SourceLocation(), ParsedAttr::Form::GNU(), nullptr);
+
+  // Due to a parsing error, we either went over the cached tokens or
+  // there are still cached tokens left, so we skip the leftover tokens.
+  while (Tok.isNot(tok::eof))
+    ConsumeAnyToken();
+
+  // Consume the fake EOF token if it's there
+  if (Tok.is(tok::eof) && Tok.getEofData() == AttrEnd.getEofData())
+    ConsumeAnyToken();
+
+  OutAttrs.takeAllAppendingFrom(Attrs);
+}
+
+void LateParsedTypeAttribute::ParseInto(ParsedAttributes &OutAttrs) {
+  // Delegate to the Parser that created this attribute
+  Self->ParseLexedTypeAttribute(*this, /*EnterScope=*/true, OutAttrs);
+}
+
+void Parser::TakeTypeAttrsAppendingFrom(LateParsedAttrList &To,
+                                        LateParsedAttrList &From) {
+  auto it =
+      std::remove_if(From.begin(), From.end(), [&](LateParsedAttribute *LA) {
+        if (auto *LTA = dyn_cast<LateParsedTypeAttribute>(LA)) {
+          To.push_back(LTA);
+          return true;
+        }
+        return false;
+      });
+  From.erase(it, From.end());
+}
+
 void Parser::ParseStructUnionBody(SourceLocation RecordLoc,
                                   DeclSpec::TST TagType, RecordDecl *TagDecl) {
   PrettyDeclStackTraceEntry CrashInfo(Actions.Context, TagDecl, RecordLoc,

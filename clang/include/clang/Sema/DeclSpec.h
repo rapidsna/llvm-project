@@ -51,6 +51,7 @@ namespace clang {
   class OverflowBehaviorType;
   struct TemplateIdAnnotation;
   struct LateParsedAttribute;
+  struct LateParsedTypeAttribute;
 
   /// Represents a C++ nested-name-specifier or a global scope specifier.
   ///
@@ -1254,9 +1255,11 @@ typedef SmallVector<Token, 4> CachedTokens;
 class LateParsedAttrList : public SmallVector<LateParsedAttribute *, 2> {
 public:
   LateParsedAttrList(bool PSoon = false,
-                     bool LateAttrParseExperimentalExtOnly = false)
+                     bool LateAttrParseExperimentalExtOnly = false,
+                     bool LateAttrParseTypeAttrOnly = false)
       : ParseSoon(PSoon),
-        LateAttrParseExperimentalExtOnly(LateAttrParseExperimentalExtOnly) {}
+        LateAttrParseExperimentalExtOnly(LateAttrParseExperimentalExtOnly),
+        LateAttrParseTypeAttrOnly(LateAttrParseTypeAttrOnly) {}
 
   bool parseSoon() { return ParseSoon; }
   /// returns true iff the attribute to be parsed should only be late parsed
@@ -1265,9 +1268,12 @@ public:
     return LateAttrParseExperimentalExtOnly;
   }
 
+  bool lateAttrParseTypeAttrOnly() { return LateAttrParseTypeAttrOnly; }
+
 private:
   bool ParseSoon; // Are we planning to parse these shortly after creation?
   bool LateAttrParseExperimentalExtOnly;
+  bool LateAttrParseTypeAttrOnly;
 };
 
 /// One instance of this struct is used for each type in a

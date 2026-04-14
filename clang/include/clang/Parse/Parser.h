@@ -190,6 +190,12 @@ public:
 /// FIXME: Perhaps we should change the name of LateParsedDeclaration to
 /// LateParsedTokens.
 struct LateParsedAttribute : public LateParsedDeclaration {
+
+  enum LPA_Kind {
+    LPA_Declaration,
+    LPA_Type,
+  };
+
   Parser *Self;
   CachedTokens Toks;
   IdentifierInfo &AttrName;
@@ -197,13 +203,51 @@ struct LateParsedAttribute : public LateParsedDeclaration {
   SourceLocation AttrNameLoc;
   SmallVector<Decl *, 2> Decls;
 
+private:
+  LPA_Kind Kind;
+
+public:
   explicit LateParsedAttribute(Parser *P, IdentifierInfo &Name,
-                               SourceLocation Loc)
-      : Self(P), AttrName(Name), AttrNameLoc(Loc) {}
+                               SourceLocation Loc,
+                               LPA_Kind Kind = LPA_Declaration)
+      : Self(P), AttrName(Name), AttrNameLoc(Loc), Kind(Kind) {}
 
   void ParseLexedAttributes() override;
 
   void addDecl(Decl *D) { Decls.push_back(D); }
+
+  LPA_Kind getKind() const { return Kind; }
+
+  // LLVM-style RTTI support
+  static bool classof(const LateParsedAttribute *LA) {
+    // LateParsedAttribute matches both Declaration and Type kinds
+    return LA->getKind() == LPA_Declaration || LA->getKind() == LPA_Type;
+  }
+};
+
+/// Contains the lexed tokens of an attribute with arguments that
+/// may reference member variables and so need to be parsed at the
+/// end of the class declaration after parsing all other member
+/// member declarations.
+/// FIXME: Perhaps we should change the name of LateParsedDeclaration to
+/// LateParsedTokens.
+struct LateParsedTypeAttribute : public LateParsedAttribute {
+
+  explicit LateParsedTypeAttribute(Parser *P, IdentifierInfo &Name,
+                                   SourceLocation Loc)
+      : LateParsedAttribute(P, Name, Loc, LPA_Type) {}
+
+  void ParseLexedAttributes() override;
+
+  /// Parse this late-parsed type attribute and store results in OutAttrs.
+  /// This method can be called from Sema during type transformation to
+  /// parse the cached tokens and produce the final attribute.
+  void ParseInto(ParsedAttributes &OutAttrs);
+
+  // LLVM-style RTTI support
+  static bool classof(const LateParsedAttribute *LA) {
+    return LA->getKind() == LPA_Type;
+  }
 };
 
 /// Parser - This implements a parser for the C family of languages.  After
@@ -1165,6 +1209,7 @@ private:
 
 private:
   friend struct LateParsedAttribute;
+  friend struct LateParsedTypeAttribute;
 
   struct ParsingClass;
 
@@ -1485,6 +1530,15 @@ private:
   /// to the Attribute list for the decl.
   void ParseLexedCAttribute(LateParsedAttribute &LA, bool EnterScope,
                             ParsedAttributes *OutAttrs = nullptr);
+
+  void ParseLexedTypeAttribute(LateParsedTypeAttribute &LA, bool EnterScope,
+                               ParsedAttributes &OutAttrs);
+
+  /// Helper function to move LateParsedTypeAttribute pointers from one list
+  /// to another. Filters type attributes from \p From and appends them to \p
+  /// To.
+  static void TakeTypeAttrsAppendingFrom(LateParsedAttrList &To,
+                                         LateParsedAttrList &From);
 
   void ParseLexedPragmas(ParsingClass &Class);
   void ParseLexedPragma(LateParsedPragma &LP);
