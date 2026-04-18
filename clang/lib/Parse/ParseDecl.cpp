@@ -4836,8 +4836,7 @@ void Parser::ParseLexedCAttributeList(LateParsedAttrList &LAs, bool EnterScope,
   LAs.clear();
 }
 
-void Parser::ParseLexedCAttribute(LateParsedAttribute &LA, bool EnterScope,
-                                  ParsedAttributes *OutAttrs) {
+ParsedAttributes Parser::ParseLexedCAttributeTokens(LateParsedAttribute &LA) {
   // Create a fake EOF so that attribute parsing won't go off the end of the
   // attribute.
   Token AttrEnd;
@@ -4856,9 +4855,6 @@ void Parser::ParseLexedCAttribute(LateParsedAttribute &LA, bool EnterScope,
   // as when we entered this function.
   ConsumeAnyToken(/*ConsumeCodeCompletionTok=*/true);
 
-  // TODO: Use `EnterScope`
-  (void)EnterScope;
-
   ParsedAttributes Attrs(AttrFactory);
 
   assert(LA.Decls.size() <= 1 &&
@@ -4867,9 +4863,6 @@ void Parser::ParseLexedCAttribute(LateParsedAttribute &LA, bool EnterScope,
   // Dispatch based on the attribute and parse it
   ParseGNUAttributeArgs(&LA.AttrName, LA.AttrNameLoc, Attrs, nullptr, nullptr,
                         SourceLocation(), ParsedAttr::Form::GNU(), nullptr);
-
-  for (auto *D : LA.Decls)
-    Actions.ActOnFinishDelayedAttribute(getCurScope(), D, Attrs);
 
   // Due to a parsing error, we either went over the cached tokens or
   // there are still cached tokens left, so we skip the leftover tokens.
@@ -4880,56 +4873,24 @@ void Parser::ParseLexedCAttribute(LateParsedAttribute &LA, bool EnterScope,
   if (Tok.is(tok::eof) && Tok.getEofData() == AttrEnd.getEofData())
     ConsumeAnyToken();
 
-  if (OutAttrs) {
+  return Attrs;
+}
+
+void Parser::ParseLexedCAttribute(LateParsedAttribute &LA, bool EnterScope,
+                                  ParsedAttributes *OutAttrs) {
+  ParsedAttributes Attrs = ParseLexedCAttributeTokens(LA);
+
+  for (auto *D : LA.Decls)
+    Actions.ActOnFinishDelayedAttribute(getCurScope(), D, Attrs);
+
+  if (OutAttrs)
     OutAttrs->takeAllAppendingFrom(Attrs);
-  }
 }
 
 void Parser::ParseLexedTypeAttribute(LateParsedTypeAttribute &LA,
                                      bool EnterScope,
                                      ParsedAttributes &OutAttrs) {
-  // Create a fake EOF so that attribute parsing won't go off the end of the
-  // attribute.
-  Token AttrEnd;
-  AttrEnd.startToken();
-  AttrEnd.setKind(tok::eof);
-  AttrEnd.setLocation(Tok.getLocation());
-  AttrEnd.setEofData(LA.Toks.data());
-  LA.Toks.push_back(AttrEnd);
-
-  // Append the current token at the end of the new token stream so that it
-  // doesn't get lost.
-  LA.Toks.push_back(Tok);
-  PP.EnterTokenStream(LA.Toks, /*DisableMacroExpansion=*/true,
-                      /*IsReinject=*/true);
-  // Drop the current token and bring the first cached one. It's the same token
-  // as when we entered this function.
-  ConsumeAnyToken(/*ConsumeCodeCompletionTok=*/true);
-
-  // Note: EnterScope parameter is not used here. Type attributes are parsed
-  // in the context where ActOnFields is called, which already has the proper
-  // scope established. The actual semantic analysis happens during the
-  // RebuildTypeWithLateParsedAttr transformation, not during token parsing.
-  (void)EnterScope;
-
-  ParsedAttributes Attrs(AttrFactory);
-
-  assert(LA.Decls.size() <= 1 &&
-         "late field attribute expects to have at most one declaration.");
-
-  // Dispatch based on the attribute and parse it
-  ParseGNUAttributeArgs(&LA.AttrName, LA.AttrNameLoc, Attrs, nullptr, nullptr,
-                        SourceLocation(), ParsedAttr::Form::GNU(), nullptr);
-
-  // Due to a parsing error, we either went over the cached tokens or
-  // there are still cached tokens left, so we skip the leftover tokens.
-  while (Tok.isNot(tok::eof))
-    ConsumeAnyToken();
-
-  // Consume the fake EOF token if it's there
-  if (Tok.is(tok::eof) && Tok.getEofData() == AttrEnd.getEofData())
-    ConsumeAnyToken();
-
+  ParsedAttributes Attrs = ParseLexedCAttributeTokens(LA);
   OutAttrs.takeAllAppendingFrom(Attrs);
 }
 

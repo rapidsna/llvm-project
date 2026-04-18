@@ -225,12 +225,11 @@ public:
   }
 };
 
-/// Contains the lexed tokens of an attribute with arguments that
-/// may reference member variables and so need to be parsed at the
-/// end of the class declaration after parsing all other member
-/// member declarations.
-/// FIXME: Perhaps we should change the name of LateParsedDeclaration to
-/// LateParsedTokens.
+/// A late-parsed attribute that will be applied as a type attribute.
+/// Unlike LateParsedAttribute (which applies to declarations via
+/// ActOnFinishDelayedAttribute), this stores cached tokens that are
+/// parsed during type construction when the placeholder LateParsedAttrType
+/// is replaced with a concrete type (e.g., CountAttributedType).
 struct LateParsedTypeAttribute : public LateParsedAttribute {
 
   explicit LateParsedTypeAttribute(Parser *P, IdentifierInfo &Name,
@@ -1533,6 +1532,11 @@ private:
 
   void ParseLexedTypeAttribute(LateParsedTypeAttribute &LA, bool EnterScope,
                                ParsedAttributes &OutAttrs);
+
+  /// Parse cached tokens for a late-parsed attribute and return the parsed
+  /// attributes. Shared implementation used by both ParseLexedCAttribute and
+  /// ParseLexedTypeAttribute.
+  ParsedAttributes ParseLexedCAttributeTokens(LateParsedAttribute &LA);
 
   /// Helper function to move LateParsedTypeAttribute pointers from one list
   /// to another. Filters type attributes from \p From and appends them to \p
