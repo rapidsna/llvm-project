@@ -7856,6 +7856,10 @@ void TypeLocReader::VisitValueTerminatedTypeLoc(ValueTerminatedTypeLoc TL) {
 }
 /* TO_UPSTREAM(BoundsSafety) OFF */
 
+void TypeLocReader::VisitLateParsedAttrTypeLoc(LateParsedAttrTypeLoc TL) {
+  // Nothing to do
+}
+
 void TypeLocReader::VisitBTFTagAttributedTypeLoc(BTFTagAttributedTypeLoc TL) {
   // Nothing to do.
 }
