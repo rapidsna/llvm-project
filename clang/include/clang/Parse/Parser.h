@@ -191,9 +191,9 @@ public:
 /// LateParsedTokens.
 struct LateParsedAttribute : public LateParsedDeclaration {
 
-  enum LPA_Kind {
-    LPA_Declaration,
-    LPA_Type,
+  enum class Kind {
+    Declaration,
+    Type,
   };
 
   Parser *Self;
@@ -204,25 +204,20 @@ struct LateParsedAttribute : public LateParsedDeclaration {
   SmallVector<Decl *, 2> Decls;
 
 private:
-  LPA_Kind Kind;
+  Kind K;
 
 public:
   explicit LateParsedAttribute(Parser *P, IdentifierInfo &Name,
-                               SourceLocation Loc,
-                               LPA_Kind Kind = LPA_Declaration)
-      : Self(P), AttrName(Name), AttrNameLoc(Loc), Kind(Kind) {}
+                               SourceLocation Loc, Kind K = Kind::Declaration)
+      : Self(P), AttrName(Name), AttrNameLoc(Loc), K(K) {}
 
   void ParseLexedAttributes() override;
 
   void addDecl(Decl *D) { Decls.push_back(D); }
 
-  LPA_Kind getKind() const { return Kind; }
+  Kind getKind() const { return K; }
 
-  // LLVM-style RTTI support
-  static bool classof(const LateParsedAttribute *LA) {
-    // LateParsedAttribute matches both Declaration and Type kinds
-    return LA->getKind() == LPA_Declaration || LA->getKind() == LPA_Type;
-  }
+  static bool classof(const LateParsedAttribute *LA) { return true; }
 };
 
 /// A late-parsed attribute that will be applied as a type attribute.
@@ -234,7 +229,7 @@ struct LateParsedTypeAttribute : public LateParsedAttribute {
 
   explicit LateParsedTypeAttribute(Parser *P, IdentifierInfo &Name,
                                    SourceLocation Loc)
-      : LateParsedAttribute(P, Name, Loc, LPA_Type) {}
+      : LateParsedAttribute(P, Name, Loc, Kind::Type) {}
 
   void ParseLexedAttributes() override;
 
@@ -243,9 +238,8 @@ struct LateParsedTypeAttribute : public LateParsedAttribute {
   /// parse the cached tokens and produce the final attribute.
   void ParseInto(ParsedAttributes &OutAttrs);
 
-  // LLVM-style RTTI support
   static bool classof(const LateParsedAttribute *LA) {
-    return LA->getKind() == LPA_Type;
+    return LA->getKind() == Kind::Type;
   }
 };
 

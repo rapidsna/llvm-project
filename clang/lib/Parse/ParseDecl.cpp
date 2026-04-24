@@ -4880,7 +4880,7 @@ void Parser::ParseLexedCAttribute(LateParsedAttribute &LA, bool EnterScope,
                                   ParsedAttributes *OutAttrs) {
   ParsedAttributes Attrs = ParseLexedCAttributeTokens(LA);
 
-  for (auto *D : LA.Decls)
+  for (Decl *D : LA.Decls)
     Actions.ActOnFinishDelayedAttribute(getCurScope(), D, Attrs);
 
   if (OutAttrs)
@@ -4901,15 +4901,15 @@ void LateParsedTypeAttribute::ParseInto(ParsedAttributes &OutAttrs) {
 
 void Parser::TakeTypeAttrsAppendingFrom(LateParsedAttrList &To,
                                         LateParsedAttrList &From) {
-  auto it =
-      std::remove_if(From.begin(), From.end(), [&](LateParsedAttribute *LA) {
-        if (auto *LTA = dyn_cast<LateParsedTypeAttribute>(LA)) {
-          To.push_back(LTA);
+  LateParsedAttrList::iterator It =
+      llvm::remove_if(From, [&](LateParsedAttribute *LA) {
+        if (isa<LateParsedTypeAttribute>(LA)) {
+          To.push_back(LA);
           return true;
         }
         return false;
       });
-  From.erase(it, From.end());
+  From.erase(It, From.end());
 }
 
 void Parser::ParseStructUnionBody(SourceLocation RecordLoc,
