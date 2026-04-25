@@ -1261,14 +1261,14 @@ public:
         LateAttrParseExperimentalExtOnly(LateAttrParseExperimentalExtOnly),
         LateAttrParseTypeAttrOnly(LateAttrParseTypeAttrOnly) {}
 
-  bool parseSoon() { return ParseSoon; }
+  bool parseSoon() const { return ParseSoon; }
   /// returns true iff the attribute to be parsed should only be late parsed
   /// if it is annotated with `LateAttrParseExperimentalExt`
-  bool lateAttrParseExperimentalExtOnly() {
+  bool lateAttrParseExperimentalExtOnly() const {
     return LateAttrParseExperimentalExtOnly;
   }
 
-  bool lateAttrParseTypeAttrOnly() { return LateAttrParseTypeAttrOnly; }
+  bool lateAttrParseTypeAttrOnly() const { return LateAttrParseTypeAttrOnly; }
 
 private:
   bool ParseSoon; // Are we planning to parse these shortly after creation?

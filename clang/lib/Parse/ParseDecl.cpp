@@ -4825,12 +4825,12 @@ void Parser::ParseStructDeclaration(
 
 // TODO: All callers of this function should be moved to
 // `Parser::ParseLexedAttributeList`.
-void Parser::ParseLexedCAttributeList(LateParsedAttrList &LAs, bool EnterScope,
+void Parser::ParseLexedCAttributeList(LateParsedAttrList &LAs,
                                       ParsedAttributes *OutAttrs) {
   assert(LAs.parseSoon() &&
          "Attribute list should be marked for immediate parsing.");
   for (auto *LA : LAs) {
-    ParseLexedCAttribute(*LA, EnterScope, OutAttrs);
+    ParseLexedCAttribute(*LA, OutAttrs);
     delete LA;
   }
   LAs.clear();
@@ -4876,7 +4876,7 @@ ParsedAttributes Parser::ParseLexedCAttributeTokens(LateParsedAttribute &LA) {
   return Attrs;
 }
 
-void Parser::ParseLexedCAttribute(LateParsedAttribute &LA, bool EnterScope,
+void Parser::ParseLexedCAttribute(LateParsedAttribute &LA,
                                   ParsedAttributes *OutAttrs) {
   ParsedAttributes Attrs = ParseLexedCAttributeTokens(LA);
 
@@ -4888,7 +4888,6 @@ void Parser::ParseLexedCAttribute(LateParsedAttribute &LA, bool EnterScope,
 }
 
 void Parser::ParseLexedTypeAttribute(LateParsedTypeAttribute &LA,
-                                     bool EnterScope,
                                      ParsedAttributes &OutAttrs) {
   ParsedAttributes Attrs = ParseLexedCAttributeTokens(LA);
   OutAttrs.takeAllAppendingFrom(Attrs);
@@ -4896,7 +4895,7 @@ void Parser::ParseLexedTypeAttribute(LateParsedTypeAttribute &LA,
 
 void LateParsedTypeAttribute::ParseInto(ParsedAttributes &OutAttrs) {
   // Delegate to the Parser that created this attribute
-  Self->ParseLexedTypeAttribute(*this, /*EnterScope=*/true, OutAttrs);
+  Self->ParseLexedTypeAttribute(*this, OutAttrs);
 }
 
 void Parser::TakeTypeAttrsAppendingFrom(LateParsedAttrList &To,
@@ -5038,7 +5037,7 @@ void Parser::ParseStructUnionBody(SourceLocation RecordLoc,
   MaybeParseGNUAttributes(attrs, &LateFieldAttrs);
 
   // Late parse field attributes if necessary.
-  ParseLexedCAttributeList(LateFieldAttrs, /*EnterScope=*/false);
+  ParseLexedCAttributeList(LateFieldAttrs);
 
   SmallVector<Decl *, 32> FieldDecls(TagDecl->fields());
 

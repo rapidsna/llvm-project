@@ -206,10 +206,15 @@ struct LateParsedAttribute : public LateParsedDeclaration {
 private:
   Kind K;
 
+protected:
+  explicit LateParsedAttribute(Parser *P, IdentifierInfo &Name,
+                               SourceLocation Loc, Kind K)
+      : Self(P), AttrName(Name), AttrNameLoc(Loc), K(K) {}
+
 public:
   explicit LateParsedAttribute(Parser *P, IdentifierInfo &Name,
-                               SourceLocation Loc, Kind K = Kind::Declaration)
-      : Self(P), AttrName(Name), AttrNameLoc(Loc), K(K) {}
+                               SourceLocation Loc)
+      : LateParsedAttribute(P, Name, Loc, Kind::Declaration) {}
 
   void ParseLexedAttributes() override;
 
@@ -1513,7 +1518,7 @@ private:
                                 const char *&PrevSpec, unsigned &DiagID,
                                 bool &isInvalid);
 
-  void ParseLexedCAttributeList(LateParsedAttrList &LA, bool EnterScope,
+  void ParseLexedCAttributeList(LateParsedAttrList &LA,
                                 ParsedAttributes *OutAttrs = nullptr);
 
   /// Finish parsing an attribute for which parsing was delayed.
@@ -1521,10 +1526,10 @@ private:
   /// for each LateParsedAttribute. We consume the saved tokens and
   /// create an attribute with the arguments filled in. We add this
   /// to the Attribute list for the decl.
-  void ParseLexedCAttribute(LateParsedAttribute &LA, bool EnterScope,
+  void ParseLexedCAttribute(LateParsedAttribute &LA,
                             ParsedAttributes *OutAttrs = nullptr);
 
-  void ParseLexedTypeAttribute(LateParsedTypeAttribute &LA, bool EnterScope,
+  void ParseLexedTypeAttribute(LateParsedTypeAttribute &LA,
                                ParsedAttributes &OutAttrs);
 
   /// Parse cached tokens for a late-parsed attribute and return the parsed
