@@ -1673,6 +1673,11 @@ static void writeConstantInternal(raw_ostream &Out, const Constant *CV,
     Type *Ty = CFP->getType();
 
     if (Ty->isVectorTy()) {
+      if (CFP->isPosZero()) {
+        Out << "zeroinitializer";
+        return;
+      }
+
       Out << "splat (";
       WriterCtx.TypePrinter->print(Ty->getScalarType(), Out);
       Out << " ";
