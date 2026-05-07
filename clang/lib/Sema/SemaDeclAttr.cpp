@@ -8536,7 +8536,6 @@ static void handleNoPFPAttrField(Sema &S, Decl *D, const ParsedAttr &AL) {
 }
 
 static void handleCountedByAttrField(Sema &S, Decl *D, const ParsedAttr &AL) {
-  auto *FD = dyn_cast<FieldDecl>(D);
   /* TO_UPSTREAM(BoundsSafety) ON */
   // In upstream 'counted_by' is subjected to FieldDecl only, whereas internally,
   // the attribute applies to any other subjects. This code is to manually handle
