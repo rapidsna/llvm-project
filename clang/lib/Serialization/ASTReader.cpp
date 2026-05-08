@@ -6463,7 +6463,8 @@ Module *ASTReader::getSubmodule(uint32_t GlobalID) {
   assert(It != GlobalSubmoduleMap.end());
   ModuleFile &F = *It->second;
   unsigned Index = GlobalID - F.BaseSubmoduleID - NUM_PREDEF_SUBMODULE_IDS;
-  unsigned LocalID = Index + F.LocalBaseSubmoduleID + NUM_PREDEF_SUBMODULE_IDS;
+  [[maybe_unused]] unsigned LocalID =
+      Index + F.LocalBaseSubmoduleID + NUM_PREDEF_SUBMODULE_IDS;
 
   BitstreamCursor &Cursor = F.SubmodulesCursor;
   SavedStreamPosition SavedPosition(Cursor);
@@ -6536,10 +6537,9 @@ Module *ASTReader::getSubmodule(uint32_t GlobalID) {
 
       StringRef Name = Blob;
       unsigned Idx = 0;
-      unsigned ReadLocalID = Record[Idx++];
+      [[maybe_unused]] unsigned ReadLocalID = Record[Idx++];
       assert(LocalID == ReadLocalID);
-      SubmoduleID ReadGlobalID = getGlobalSubmoduleID(F, ReadLocalID);
-      assert(GlobalID == ReadGlobalID);
+      assert(GlobalID == getGlobalSubmoduleID(F, ReadLocalID));
       SubmoduleID Parent = getGlobalSubmoduleID(F, Record[Idx++]);
       Module::ModuleKind Kind = (Module::ModuleKind)Record[Idx++];
 
