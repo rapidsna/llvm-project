@@ -30,36 +30,6 @@ using namespace clang;
 using namespace dependencies;
 using llvm::Error;
 
-namespace {
-/// Forwards the gatherered dependencies to the consumer.
-class DependencyConsumerForwarder : public DependencyFileGenerator {
-public:
-  DependencyConsumerForwarder(std::unique_ptr<DependencyOutputOptions> Opts,
-                              StringRef WorkingDirectory, DependencyConsumer &C,
-                              bool EmitDependencyFile)
-      : DependencyFileGenerator(*Opts), WorkingDirectory(WorkingDirectory),
-        Opts(std::move(Opts)), C(C), EmitDependencyFile(EmitDependencyFile) {}
-
-  void finishedMainFile(DiagnosticsEngine &Diags) override {
-    C.handleDependencyOutputOpts(*Opts);
-    llvm::SmallString<256> CanonPath;
-    for (const auto &File : getDependencies()) {
-      CanonPath = File;
-      llvm::sys::path::remove_dots(CanonPath, /*remove_dot_dot=*/true);
-      llvm::sys::path::make_absolute(WorkingDirectory, CanonPath);
-      C.handleFileDependency(CanonPath);
-    }
-    if (EmitDependencyFile)
-      DependencyFileGenerator::finishedMainFile(Diags);
-  }
-
-private:
-  StringRef WorkingDirectory;
-  std::unique_ptr<DependencyOutputOptions> Opts;
-  DependencyConsumer &C;
-  bool EmitDependencyFile = false;
-};
-
 static bool checkHeaderSearchPaths(const HeaderSearchOptions &HSOpts,
                                    const HeaderSearchOptions &ExistingHSOpts,
                                    DiagnosticsEngine *Diags,
@@ -83,6 +53,8 @@ static bool checkHeaderSearchPaths(const HeaderSearchOptions &HSOpts,
   }
   return false;
 }
+
+namespace {
 
 using PrebuiltModuleFilesT = decltype(HeaderSearchOptions::PrebuiltModuleFiles);
 
@@ -655,51 +627,20 @@ std::shared_ptr<ModuleDepCollector>
 dependencies::initializeScanInstanceDependencyCollector(
     CompilerInstance &ScanInstance,
     std::unique_ptr<DependencyOutputOptions> DepOutputOpts,
-    StringRef WorkingDirectory, DependencyConsumer &Consumer,
-    DependencyScanningService &Service, CompilerInvocation &Inv,
-    DependencyActionController &Controller,
+    DependencyConsumer &Consumer, DependencyScanningService &Service,
+    CompilerInvocation &Inv, DependencyActionController &Controller,
     PrebuiltModulesAttrsMap PrebuiltModulesASTMap,
-    llvm::SmallVector<StringRef> &StableDirs, bool EmitDependencyFile) {
-  std::shared_ptr<ModuleDepCollector> MDC;
-  // FIXME: The caller APIs in \p DependencyScanningTool expect a specific
-  // DependencyCollector to get attached to the preprocessor in order to
-  // function properly (e.g. \p FullDependencyConsumer needs \p
-  // ModuleDepCollector) but this association is very indirect via the value
-  // of the \p ScanningOutputFormat. We should remove \p Format field from
-  // \p DependencyScanningAction, and have the callers pass in a
-  // “DependencyCollector factory” so the connection of collector<->consumer
-  // is explicit in each \p DependencyScanningTool function.
-  switch (Service.getOpts().Format) {
-  case ScanningOutputFormat::Make:
-    ScanInstance.addDependencyCollector(
-        std::make_shared<DependencyConsumerForwarder>(
-            std::move(DepOutputOpts), WorkingDirectory, Consumer,
-            EmitDependencyFile));
-    break;
-  case ScanningOutputFormat::IncludeTree:
-  case ScanningOutputFormat::P1689:
-  case ScanningOutputFormat::Full:
-  case ScanningOutputFormat::FullIncludeTree:
-    if (EmitDependencyFile) {
-      auto DFG = std::make_shared<ReversePrefixMappingDependencyFileGenerator>(
-          *DepOutputOpts);
-      DFG->initialize(ScanInstance.getInvocation());
-      ScanInstance.addDependencyCollector(std::move(DFG));
-    }
-
-    MDC = std::make_shared<ModuleDepCollector>(
-        Service, std::move(DepOutputOpts), ScanInstance, Consumer, Controller,
-        Inv, std::move(PrebuiltModulesASTMap), StableDirs);
-    ScanInstance.addDependencyCollector(MDC);
-    ScanInstance.setGenModuleActionWrapper(
-        [&Controller = Controller](const FrontendOptions &Opts,
-                                   std::unique_ptr<FrontendAction> Wrapped) {
-          return std::make_unique<WrapScanModuleBuildAction>(std::move(Wrapped),
-                                                             Controller);
-        });
-    break;
-  }
-
+    SmallVector<StringRef> &StableDirs) {
+  auto MDC = std::make_shared<ModuleDepCollector>(
+      Service, std::move(DepOutputOpts), ScanInstance, Consumer, Controller,
+      Inv, std::move(PrebuiltModulesASTMap), StableDirs);
+  ScanInstance.addDependencyCollector(MDC);
+  ScanInstance.setGenModuleActionWrapper(
+      [&Controller = Controller](const FrontendOptions &Opts,
+                                 std::unique_ptr<FrontendAction> Wrapped) {
+        return std::make_unique<WrapScanModuleBuildAction>(std::move(Wrapped),
+                                                           Controller);
+      });
   return MDC;
 }
 
@@ -970,9 +911,8 @@ bool DependencyScanningAction::runInvocation(
           ScanningOutputFormat::Make);
 
   MDC = initializeScanInstanceDependencyCollector(
-      ScanInstance, std::move(DepOutputOpts), WorkingDirectory, Consumer,
-      Service, *OriginalInvocation, Controller, *MaybePrebuiltModulesASTMap,
-      StableDirs, EmitDependencyFile);
+      ScanInstance, std::move(DepOutputOpts), Consumer, Service,
+      *OriginalInvocation, Controller, *MaybePrebuiltModulesASTMap, StableDirs);
 
   // Normally this would be handled by GeneratePCHAction
   if (ScanInstance.getFrontendOpts().ProgramAction == frontend::GeneratePCH)

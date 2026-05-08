@@ -87,7 +87,6 @@ bool DependencyScanningWorker::computeDependencies(
 
   DependencyScanningAction Action(Service, WorkingDirectory, DepConsumer,
                                   Controller, DepFS,
-                                  /*EmitDependencyFile=*/false,
                                   /*DiagGenerationAsCompilation=*/false);
 
   const bool Success = llvm::all_of(CommandLines, [&](const auto &Cmd) {
@@ -140,10 +139,10 @@ void DependencyScanningWorker::computeDependenciesFromCompilerInvocation(
 
   // FIXME: EmitDependencyFile should only be set when it's for a real
   // compilation.
-  DependencyScanningAction Action(
-      Service, WorkingDirectory, DepsConsumer, Controller, DepFS,
-      /*EmitDependencyFile=*/!DepFile.empty(), DiagGenerationAsCompilation,
-      /*ModuleName=*/std::nullopt, VerboseOS);
+  DependencyScanningAction Action(Service, WorkingDirectory, DepsConsumer,
+                                  Controller, DepFS,
+                                  DiagGenerationAsCompilation,
+                                  /*ModuleName=*/std::nullopt, VerboseOS);
 
   // Ignore result; we're just collecting dependencies.
   //

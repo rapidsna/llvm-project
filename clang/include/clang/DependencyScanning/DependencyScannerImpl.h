@@ -33,12 +33,11 @@ public:
       DependencyScanningService &Service, StringRef WorkingDirectory,
       DependencyConsumer &Consumer, DependencyActionController &Controller,
       llvm::IntrusiveRefCntPtr<DependencyScanningWorkerFilesystem> DepFS,
-      bool EmitDependencyFile, bool DiagGenerationAsCompilation,
+      bool DiagGenerationAsCompilation,
       std::optional<StringRef> ModuleName = std::nullopt,
       raw_ostream *VerboseOS = nullptr)
       : Service(Service), WorkingDirectory(WorkingDirectory),
         Consumer(Consumer), Controller(Controller), DepFS(std::move(DepFS)),
-        EmitDependencyFile(EmitDependencyFile),
         DiagGenerationAsCompilation(DiagGenerationAsCompilation),
         VerboseOS(VerboseOS) {}
   bool runInvocation(std::string Executable,
@@ -55,7 +54,6 @@ private:
   DependencyConsumer &Consumer;
   DependencyActionController &Controller;
   llvm::IntrusiveRefCntPtr<DependencyScanningWorkerFilesystem> DepFS;
-  bool EmitDependencyFile = false;
   bool DiagGenerationAsCompilation;
   std::optional<StringRef> ModuleName;
   std::optional<CompilerInstance> ScanInstanceStorage;
@@ -132,11 +130,10 @@ computePrebuiltModulesASTMap(CompilerInstance &ScanInstance,
 std::shared_ptr<ModuleDepCollector> initializeScanInstanceDependencyCollector(
     CompilerInstance &ScanInstance,
     std::unique_ptr<DependencyOutputOptions> DepOutputOpts,
-    StringRef WorkingDirectory, DependencyConsumer &Consumer,
-    DependencyScanningService &Service, CompilerInvocation &Inv,
-    DependencyActionController &Controller,
+    DependencyConsumer &Consumer, DependencyScanningService &Service,
+    CompilerInvocation &Inv, DependencyActionController &Controller,
     PrebuiltModulesAttrsMap PrebuiltModulesASTMap,
-    llvm::SmallVector<StringRef> &StableDirs, bool EmitDependencyFile);
+    SmallVector<StringRef> &StableDirs);
 } // namespace dependencies
 } // namespace clang
 
