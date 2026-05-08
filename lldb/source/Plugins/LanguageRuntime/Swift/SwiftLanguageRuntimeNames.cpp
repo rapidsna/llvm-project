@@ -1442,7 +1442,7 @@ SwiftLanguageRuntime::GetGenericSignature(llvm::StringRef function_name,
   bool error = false;
   // For each pack_expansion...
   swift::Demangle::NodePointer type_node = nullptr;
-  TypeSystemSwiftTypeRef::PreOrderTraversal(
+  llvm::cantFail(TypeSystemSwiftTypeRef::PreOrderTraversal(
       node, [&](swift::Demangle::NodePointer node) {
         if (node->getKind() == swift::Demangle::Node::Kind::PackExpansion) {
           if (node->getNumChildren() != 2) {
@@ -1480,7 +1480,7 @@ SwiftLanguageRuntime::GetGenericSignature(llvm::StringRef function_name,
         }
         type_node = node;
         return true;
-      });
+      }));
 
   if (error)
     return {};
