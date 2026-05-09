@@ -580,10 +580,10 @@ std::unique_ptr<DependencyActionController>
 DependencyScanningTool::createActionController(
     DependencyScanningWorker &Worker,
     LookupModuleOutputCallback LookupModuleOutput) {
-  if (Worker.getScanningFormat() == ScanningOutputFormat::FullIncludeTree)
-    return createIncludeTreeActionController(LookupModuleOutput,
-                                             Worker.getService().getCASOpts(),
-                                             *Worker.getService().getCAS());
+  if (auto *IncludeTree = std::get_if<IncludeTreeCompilation>(
+          &Worker.getService().getOpts().Compilation))
+    return createIncludeTreeActionController(
+        LookupModuleOutput, IncludeTree->CASOpts, *IncludeTree->CAS);
   return std::make_unique<CallbackActionController>(LookupModuleOutput);
 }
 
@@ -677,10 +677,10 @@ bool CompilerInstanceWithContext::initialize(
     return false;
 
   PrebuiltModuleASTMap = std::move(*MaybePrebuiltModulesASTMap);
-  OutputOpts = createDependencyOutputOptions(
-      *OriginalInvocation,
-      /*ForceIncludeSystemHeaders=*/Worker.Service.getOpts().Format ==
-          ScanningOutputFormat::Make);
+  // FIXME: Set ForceIncludeSystemHeaders for Make consumers.
+  OutputOpts =
+      createDependencyOutputOptions(*OriginalInvocation,
+                                    /*ForceIncludeSystemHeaders=*/false);
 
   // We do not create the target in initializeScanCompilerInstance because
   // setting it here is unique for by-name lookups. We create the target only

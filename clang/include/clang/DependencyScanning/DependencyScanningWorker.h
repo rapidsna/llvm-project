@@ -192,10 +192,6 @@ public:
 
   DependencyScanningService &getService() const { return Service; }
 
-  ScanningOutputFormat getScanningFormat() const {
-    return Service.getOpts().Format;
-  }
-
   llvm::vfs::FileSystem &getVFS() const { return *DepFS; }
 
 private:

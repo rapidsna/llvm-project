@@ -86,6 +86,28 @@ enum ResourceDirRecipeKind {
   RDRK_InvokeCompiler,
 };
 
+/// The format that is output by the dependency scanner.
+enum class ScanningOutputFormat {
+  /// This is the Makefile compatible dep format. This will include all of the
+  /// deps necessary for an implicit modules build, but won't include any
+  /// intermodule dependency information.
+  Make,
+
+  /// This outputs the full clang module dependency graph suitable for use for
+  /// explicitly building modules.
+  Full,
+
+  /// This emits the CAS ID of the include tree.
+  IncludeTree,
+
+  /// This emits the full dependency graph but with include tree.
+  FullIncludeTree,
+
+  /// This outputs the dependency graph for standard c++ modules in P1689R5
+  /// format.
+  P1689,
+};
+
 static std::string OutputFileName = "-";
 static ScanningMode ScanMode = ScanningMode::DependencyDirectivesScan;
 static ScanningOutputFormat Format = ScanningOutputFormat::Make;
@@ -1318,10 +1340,13 @@ int clang_scan_deps_main(int argc, char **argv, const llvm::ToolContext &) {
     return FS;
   };
   Opts.Mode = ScanMode;
-  Opts.Format = Format;
   if (CAS && Cache)
     Opts.Compilation = IncludeTreeCompilation{CASOpts, CAS, Cache};
   Opts.OptimizeArgs = OptimizeArgs;
+  // The scanner currently ignores `#pragma clang diagnostic ...` and emits
+  // unexpected diagnostics. Work around this for now by disabling warnings
+  // entirely, at least for P1689 where people hit this most often.
+  Opts.EmitWarnings = Format != ScanningOutputFormat::P1689;
   // Within P1689 format, we don't want all the paths to be absolute path
   // since it may violate the traditional make style dependencies info.
   Opts.ReportAbsolutePaths = Format != ScanningOutputFormat::P1689;
