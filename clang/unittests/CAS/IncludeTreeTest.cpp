@@ -53,7 +53,6 @@ TEST(IncludeTree, IncludeTreeScan) {
   Opts.MakeVFS = [DB = DB, FS] {
     return llvm::cas::createCASProvidingFileSystem(DB, FS);
   };
-  Opts.Format = ScanningOutputFormat::IncludeTree;
   Opts.Compilation = IncludeTreeCompilation{CASOpts, DB, Cache};
   DependencyScanningService Service(std::move(Opts));
   DependencyScanningTool ScanTool(Service);

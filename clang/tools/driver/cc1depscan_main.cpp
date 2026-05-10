@@ -554,7 +554,6 @@ scanAndUpdateCC1Inline(const char *Exec, ArrayRef<const char *> InputArgs,
     return llvm::cas::createCASProvidingFileSystem(
         DB, llvm::vfs::createPhysicalFileSystem());
   };
-  Opts.Format = dependencies::ScanningOutputFormat::IncludeTree;
   Opts.Compilation = dependencies::IncludeTreeCompilation{CASOpts, DB, Cache};
   dependencies::DependencyScanningService Service(std::move(Opts));
   tooling::DependencyScanningTool Tool(Service);
@@ -1005,7 +1004,6 @@ int ScanServer::listen() {
     return llvm::cas::createCASProvidingFileSystem(
         CAS, llvm::vfs::createPhysicalFileSystem());
   };
-  Opts.Format = dependencies::ScanningOutputFormat::IncludeTree;
   Opts.Compilation = dependencies::IncludeTreeCompilation{CASOpts, CAS, Cache};
   dependencies::DependencyScanningService Service(std::move(Opts));
 

@@ -37,15 +37,12 @@ using namespace clang::tooling;
 
 namespace {
 struct DependencyScannerServiceOptions {
-  ScanningOutputFormat ConfiguredFormat = ScanningOutputFormat::Full;
   CASOptions CASOpts;
   ScanningOptimizations OptimizeArgs = ScanningOptimizations::Default;
   std::shared_ptr<cas::ObjectStore> CAS;
   std::shared_ptr<cas::ActionCache> Cache;
   std::optional<bool> CacheNegativeStats;
   std::optional<bool> AsyncScanModules;
-
-  ScanningOutputFormat getFormat() const;
 };
 
 struct CStringsManager {
@@ -96,15 +93,6 @@ DEFINE_SIMPLE_CONVERSION_FUNCTIONS(DependencyScanningService,
 DEFINE_SIMPLE_CONVERSION_FUNCTIONS(DependencyScanningWorker,
                                    CXDependencyScannerWorker)
 
-inline ScanningOutputFormat unwrap(CXDependencyMode Format) {
-  switch (Format) {
-  case CXDependencyMode_Flat:
-    return ScanningOutputFormat::Make;
-  case CXDependencyMode_Full:
-    return ScanningOutputFormat::Full;
-  }
-}
-
 static CXOutputKind wrap(ModuleOutputKind MOK) {
   switch (MOK) {
   case ModuleOutputKind::ModuleFile:
@@ -131,7 +119,7 @@ void clang_experimental_DependencyScannerServiceOptions_dispose(
 
 void clang_experimental_DependencyScannerServiceOptions_setDependencyMode(
     CXDependencyScannerServiceOptions Opts, CXDependencyMode Mode) {
-  unwrap(Opts)->ConfiguredFormat = unwrap(Mode);
+  // TODO: Deprecate and then remove this.
 }
 
 void clang_experimental_DependencyScannerServiceOptions_setCASDatabases(
@@ -172,16 +160,6 @@ void clang_experimental_DependencyScannerServiceOptions_setCacheNegativeStats(
   unwrap(Opts)->CacheNegativeStats = CacheNegativeStats;
 }
 
-ScanningOutputFormat DependencyScannerServiceOptions::getFormat() const {
-  if (ConfiguredFormat != ScanningOutputFormat::Full)
-    return ConfiguredFormat;
-
-  if (!CAS || !Cache)
-    return ConfiguredFormat;
-
-  return ScanningOutputFormat::FullIncludeTree;
-}
-
 void clang_experimental_DependencyScannerServiceOptions_setAsyncScanModules(
     CXDependencyScannerServiceOptions Opts, bool AsyncScanModules) {
   unwrap(Opts)->CacheNegativeStats = AsyncScanModules;
@@ -194,7 +172,6 @@ clang_experimental_DependencyScannerService_create_v1(
   std::shared_ptr<cas::ActionCache> Cache = unwrap(WrappedOpts)->Cache;
   // FIXME: Pass default CASOpts now.
   DependencyScanningServiceOptions Opts;
-  Opts.Format = unwrap(WrappedOpts)->getFormat();
   if (CAS && Cache)
     Opts.Compilation =
         IncludeTreeCompilation{unwrap(WrappedOpts)->CASOpts, CAS, Cache};
@@ -342,10 +319,6 @@ enum CXErrorCode clang_experimental_DependencyScannerWorker_getDepGraph(
     return CXError_InvalidArguments;
 
   DependencyScanningWorker *Worker = unwrap(W);
-
-  if (Worker->getScanningFormat() != ScanningOutputFormat::Full &&
-      Worker->getScanningFormat() != ScanningOutputFormat::FullIncludeTree)
-    return CXError_InvalidArguments;
 
   std::vector<std::string> Compilation{argv, argv + argc};
 
@@ -800,7 +773,6 @@ enum CXErrorCode clang_experimental_DependencyScanner_generateReproducer(
       return llvm::cas::createCASProvidingFileSystem(
           UpstreamCAS, llvm::vfs::createPhysicalFileSystem());
     };
-    ServiceOpts.Format = ScanningOutputFormat::FullIncludeTree;
     ServiceOpts.Compilation =
         IncludeTreeCompilation{Opts.CASOpts, Opts.CAS, Opts.Cache};
   }
