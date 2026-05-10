@@ -644,6 +644,8 @@ void CommandObjectExpression::DoExecute(llvm::StringRef command,
 
   if (command.empty()) {
     GetMultilineExpression();
+    // Still gathering input; the IOHandler will set the final status.
+    result.SetStatus(eReturnStatusStarted);
     return;
   }
 
@@ -711,6 +713,8 @@ void CommandObjectExpression::DoExecute(llvm::StringRef command,
     // No expression following options
     else if (expr.empty()) {
       GetMultilineExpression();
+      // Still gathering input; the IOHandler will set the final status.
+      result.SetStatus(eReturnStatusStarted);
       return;
     }
   }
