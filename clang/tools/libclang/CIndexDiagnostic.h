@@ -38,8 +38,7 @@ class CXDiagnosticSetImpl {
   llvm::DenseMap<CXFile, CXSourceFileContents> FileContents;
   const bool IsExternallyManaged;
 public:
-  CXDiagnosticSetImpl(bool isManaged = false)
-    : IsExternallyManaged(isManaged) {}
+  CXDiagnosticSetImpl(bool isManaged = false);
 
   virtual ~CXDiagnosticSetImpl();
 
