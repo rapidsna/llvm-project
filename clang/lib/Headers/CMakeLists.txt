@@ -57,6 +57,7 @@ set(arm_only_files
   )
 
 set(aarch64_only_files
+  arm64_neon.h
   arm64intr.h
   arm_neon_sve_bridge.h
   )
