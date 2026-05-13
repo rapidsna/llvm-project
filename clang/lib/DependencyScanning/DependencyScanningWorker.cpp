@@ -126,8 +126,7 @@ void DependencyScanningWorker::computeDependenciesFromCompilerInvocation(
   }
 
   DependencyScanningAction Action(Service, WorkingDirectory, DepsConsumer,
-                                  Controller, DepFS,
-                                  /*ModuleName=*/std::nullopt, VerboseOS);
+                                  Controller, DepFS, VerboseOS);
 
   // Ignore result; we're just collecting dependencies.
   //

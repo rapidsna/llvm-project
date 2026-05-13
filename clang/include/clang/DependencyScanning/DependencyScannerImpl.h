@@ -32,8 +32,7 @@ public:
   DependencyScanningAction(
       DependencyScanningService &Service, StringRef WorkingDirectory,
       DependencyConsumer &Consumer, DependencyActionController &Controller,
-      llvm::IntrusiveRefCntPtr<DependencyScanningWorkerFilesystem> DepFS,
-      std::optional<StringRef> ModuleName = std::nullopt,
+      IntrusiveRefCntPtr<DependencyScanningWorkerFilesystem> DepFS,
       raw_ostream *VerboseOS = nullptr)
       : Service(Service), WorkingDirectory(WorkingDirectory),
         Consumer(Consumer), Controller(Controller), DepFS(std::move(DepFS)),
