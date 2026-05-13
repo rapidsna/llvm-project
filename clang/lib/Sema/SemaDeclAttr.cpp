@@ -7788,34 +7788,6 @@ static void attachLateInstantiatedCountedByEndedByAttr(Sema &S, Decl *D,
 #undef ADD_ATTR
 }
 
-static void handlePtrCountedByEndedByAttr(Sema &S, Decl *D,
-                                          const ParsedAttr &AL) {
-  unsigned Level;
-  if (!S.checkUInt32Argument(AL, AL.getArgAsExpr(1), Level))
-    return;
-
-  if (D->isTemplated()) {
-    DynamicBoundsAttrInfo Info(D, Level);
-    // Scope information will be invalid by the time we instantiate the
-    // template, so perform these checks now and delay the rest of the
-    // processing until the point of instantiation.
-    EarlyLifetimeAndScopeCheck EarlyCheck(S, Info.ScopeCheck,
-                                          Info.LifetimeCheck, AL.getKind(),
-                                          Info.Ty->isArrayType());
-    if (EarlyCheck.Visit(AL.getArgAsExpr(0)))
-      return;
-    attachLateInstantiatedCountedByEndedByAttr(S, D, AL, Level);
-    return;
-  }
-
-  AttributeCommonInfo::Kind Kind = AL.getKind();
-  const IdentifierInfo *AttrName =
-      AL.printMacroName() ? AL.getMacroIdentifier() : AL.getAttrName();
-  S.applyPtrCountedByEndedByAttr(D, Level, Kind, AL.getArgAsExpr(0),
-                                 AL.getLoc(), AL.getRange(),
-                                 ("\'" + AttrName->getName() + "\'").str());
-}
-
 static void handleUnsafeLateConst(Sema &S, Decl *D,
                                   const ParsedAttr &AL) {
   D->addAttr(::new (S.Context) UnsafeLateConstAttr(S.Context, AL));
@@ -8535,17 +8507,48 @@ static void handleNoPFPAttrField(Sema &S, Decl *D, const ParsedAttr &AL) {
   D->addAttr(NoFieldProtectionAttr::Create(S.Context, AL));
 }
 
+// TO_UPSTREAM(BoundsSafety) Rename to indicate not just fields and counted_by.
 static void handleCountedByAttrField(Sema &S, Decl *D, const ParsedAttr &AL) {
   /* TO_UPSTREAM(BoundsSafety) ON */
-  // In upstream 'counted_by' is subjected to FieldDecl only, whereas internally,
-  // the attribute applies to any other subjects. This code is to manually handle
-  // cases when the counted_by is applied to non-field decl without
-  // -fbounds-safety.
-  if (!isa<FieldDecl>(D)) {
+  if (!S.getLangOpts().BoundsSafetyAttributes && !isa<FieldDecl>(D)) {
+    // In upstream 'counted_by' is subjected to FieldDecl only, whereas internally,
+    // the attribute applies to any other subjects. This code is to manually handle
+    // cases when the counted_by is applied to non-field decl without
+    // -fbounds-safety.
     S.Diag(AL.getLoc(), diag::err_attribute_wrong_decl_type_str)
         << AL.getAttrName()->getName() << AL.isRegularKeywordAttribute()
         << "non-static data members";
     AL.setInvalid();
+    return;
+  }
+  /* TO_UPSTREAM(BoundsSafety) OFF */
+
+  /* TO_UPSTREAM(BoundsSafety) ON */
+  if (S.getLangOpts().BoundsSafetyAttributes) {
+    unsigned Level;
+    if (!S.checkUInt32Argument(AL, AL.getArgAsExpr(1), Level))
+      return;
+
+    if (D->isTemplated()) {
+      DynamicBoundsAttrInfo Info(D, Level);
+      // Scope information will be invalid by the time we instantiate the
+      // template, so perform these checks now and delay the rest of the
+      // processing until the point of instantiation.
+      EarlyLifetimeAndScopeCheck EarlyCheck(S, Info.ScopeCheck,
+                                            Info.LifetimeCheck, AL.getKind(),
+                                            Info.Ty->isArrayType());
+      if (EarlyCheck.Visit(AL.getArgAsExpr(0)))
+        return;
+      attachLateInstantiatedCountedByEndedByAttr(S, D, AL, Level);
+      return;
+    }
+
+    AttributeCommonInfo::Kind Kind = AL.getKind();
+    const IdentifierInfo *AttrName =
+        AL.printMacroName() ? AL.getMacroIdentifier() : AL.getAttrName();
+    S.applyPtrCountedByEndedByAttr(D, Level, Kind, AL.getArgAsExpr(0),
+                                   AL.getLoc(), AL.getRange(),
+                                   ("\'" + AttrName->getName() + "\'").str());
     return;
   }
   /* TO_UPSTREAM(BoundsSafety) OFF */
@@ -9867,19 +9870,13 @@ ProcessDeclAttribute(Sema &S, Scope *scope, Decl *D, const ParsedAttr &AL,
   case ParsedAttr::AT_CountedByOrNull:
   case ParsedAttr::AT_SizedBy:
   case ParsedAttr::AT_SizedByOrNull:
-    /* TO_UPSTREAM(BoundsSafety) ON */
-    if (S.getLangOpts().BoundsSafetyAttributes) {
-      handlePtrCountedByEndedByAttr(S, D, AL);
-      break;
-    }
-    /* TO_UPSTREAM(BoundsSafety) OFF */
     handleCountedByAttrField(S, D, AL);
     break;
 
   /* TO_UPSTREAM(BoundsSafety) ON*/
   // BoundsSafety attributes:
   case ParsedAttr::AT_PtrEndedBy:
-    handlePtrCountedByEndedByAttr(S, D, AL);
+    handleCountedByAttrField(S, D, AL);
     break;
   case ParsedAttr::AT_UnsafeLateConst:
     handleUnsafeLateConst(S, D, AL);
