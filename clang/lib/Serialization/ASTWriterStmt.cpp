@@ -1295,6 +1295,7 @@ void ASTStmtWriter::VisitInitListExpr(InitListExpr *E) {
     for (unsigned I = 0, N = E->getNumInits(); I != N; ++I)
       Record.AddStmt(E->getInit(I));
   }
+  Record.writeBool(E->isExplicit());
   Code = serialization::EXPR_INIT_LIST;
 }
 
