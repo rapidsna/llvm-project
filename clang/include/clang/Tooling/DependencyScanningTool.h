@@ -138,7 +138,10 @@ public:
       const llvm::DenseSet<dependencies::ModuleID> &AlreadySeen,
       dependencies::DependencyActionController &Controller);
 
-  llvm::vfs::FileSystem &getWorkerVFS() const { return Worker.getVFS(); }
+  /// Returns the worker tracing VFS, if it was requested via the service.
+  llvm::vfs::TracingFileSystem *getWorkerTracingVFS() const {
+    return Worker.getTracingVFS();
+  }
 
   std::shared_ptr<cas::ObjectStore> getCAS() const {
     return Worker.getService().getCAS();
