@@ -32,18 +32,8 @@ class CompilerInstanceWithContext;
 }
 
 namespace dependencies {
+
 class DependencyScanningWorkerFilesystem;
-
-/// A command-line tool invocation that is part of building a TU.
-///
-/// \see TranslationUnitDeps::Commands.
-struct Command {
-  std::string Executable;
-  std::vector<std::string> Arguments;
-
-  /// The \c ActionCache key for this translation unit, if any.
-  std::optional<std::string> TUCacheKey;
-};
 
 class DependencyConsumer {
 public:
