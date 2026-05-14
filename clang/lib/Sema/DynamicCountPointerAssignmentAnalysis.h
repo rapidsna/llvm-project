@@ -145,7 +145,8 @@ public:
       return ExprError();
 
     ExprResult Res =
-        RebuildInitList(E->getLBraceLoc(), Inits, E->getRBraceLoc());
+        RebuildInitList(E->getLBraceLoc(), Inits, E->getRBraceLoc(),
+            E->getLBraceLoc().isValid() && E->getRBraceLoc().isValid());
     if (Res.isUsable()) {
       SaveAndRestore SAR(InSyntacticTransformation, true);
       ExprResult SyntacticRes = TreeTransform::TransformInitListExpr(E);
