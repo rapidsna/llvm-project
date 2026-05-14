@@ -682,7 +682,7 @@ class InitListChecker {
                                    Expr *expr);
   InitListExpr *createInitListExpr(QualType CurrentObjectType,
                                    SourceRange InitRange,
-                                   unsigned ExpectedNumInits);
+                                   unsigned ExpectedNumInits, bool IsExplicit);
   int numArrayElements(QualType DeclType);
   int numStructUnionElements(QualType DeclType);
 
@@ -854,7 +854,8 @@ ExprResult InitListChecker::PerformEmptyInit(SourceLocation Loc,
                                                             true);
   MultiExprArg SubInit;
   Expr *InitExpr;
-  InitListExpr DummyInitList(SemaRef.Context, Loc, {}, Loc);
+  InitListExpr DummyInitList(SemaRef.Context, Loc, {}, Loc,
+                             /*isExplicit=*/false);
 
   // C++ [dcl.init.aggr]p7:
   //   If there are fewer initializer-clauses in the list than there are
@@ -875,7 +876,8 @@ ExprResult InitListChecker::PerformEmptyInit(SourceLocation Loc,
     // the initializer list where possible.
     InitExpr = VerifyOnly ? &DummyInitList
                           : new (SemaRef.Context)
-                                InitListExpr(SemaRef.Context, Loc, {}, Loc);
+                                InitListExpr(SemaRef.Context, Loc, {}, Loc,
+                                             /*isExplicit=*/false);
     InitExpr->setType(SemaRef.Context.VoidTy);
     SubInit = InitExpr;
     Kind = InitializationKind::CreateCopy(Loc, Loc);
@@ -1333,8 +1335,8 @@ InitListChecker::InitListChecker(
       InOverloadResolution(InOverloadResolution),
       AggrDeductionCandidateParamTypes(AggrDeductionCandidateParamTypes) {
   if (!VerifyOnly || hasAnyDesignatedInits(IL)) {
-    FullyStructuredList =
-        createInitListExpr(T, IL->getSourceRange(), IL->getNumInits());
+    FullyStructuredList = createInitListExpr(
+        T, IL->getSourceRange(), IL->getNumInits(), IL->isExplicit());
 
     // FIXME: Check that IL isn't already the semantic form of some other
     // InitListExpr. If it is, we'd create a broken AST.
@@ -3877,8 +3879,8 @@ InitListChecker::getStructuredSubobjectInit(InitListExpr *IList, unsigned Index,
       ExpectedNumInits = IList->getNumInits() - Index;
   }
 
-  InitListExpr *Result =
-      createInitListExpr(CurrentObjectType, InitRange, ExpectedNumInits);
+  InitListExpr *Result = createInitListExpr(
+      CurrentObjectType, InitRange, ExpectedNumInits, /*IsExplicit=*/false);
 
   // Link this new initializer list into the structured initializer
   // lists.
@@ -3886,12 +3888,13 @@ InitListChecker::getStructuredSubobjectInit(InitListExpr *IList, unsigned Index,
   return Result;
 }
 
-InitListExpr *
-InitListChecker::createInitListExpr(QualType CurrentObjectType,
-                                    SourceRange InitRange,
-                                    unsigned ExpectedNumInits) {
-  InitListExpr *Result = new (SemaRef.Context) InitListExpr(
-      SemaRef.Context, InitRange.getBegin(), {}, InitRange.getEnd());
+InitListExpr *InitListChecker::createInitListExpr(QualType CurrentObjectType,
+                                                  SourceRange InitRange,
+                                                  unsigned ExpectedNumInits,
+                                                  bool IsExplicit) {
+  InitListExpr *Result =
+      new (SemaRef.Context) InitListExpr(SemaRef.Context, InitRange.getBegin(),
+                                         {}, InitRange.getEnd(), IsExplicit);
 
   QualType ResultType = CurrentObjectType;
   if (!ResultType->isArrayType())
@@ -7323,7 +7326,7 @@ void InitializationSequence::InitializeFrom(Sema &S,
   if (ShouldTryListInitialization()) {
     InitListExpr *ILE = new (Context)
         InitListExpr(S.getASTContext(), Args.front()->getBeginLoc(), Args,
-                     Args.back()->getEndLoc());
+                     Args.back()->getEndLoc(), /*isExplicit=*/false);
     ILE->setType(DestType);
     Args[0] = ILE;
     TryListInitialization(S, Entity, Kind, ILE, *this,
@@ -8778,8 +8781,9 @@ ExprResult InitializationSequence::Perform(Sema &S,
     case SK_RewrapInitList: {
       Expr *E = CurInit.get();
       InitListExpr *Syntactic = Step->WrappingSyntacticList;
-      InitListExpr *ILE = new (S.Context) InitListExpr(S.Context,
-          Syntactic->getLBraceLoc(), E, Syntactic->getRBraceLoc());
+      InitListExpr *ILE = new (S.Context)
+          InitListExpr(S.Context, Syntactic->getLBraceLoc(), E,
+                       Syntactic->getRBraceLoc(), Syntactic->isExplicit());
       ILE->setSyntacticForm(Syntactic);
       ILE->setType(E->getType());
       ILE->setValueKind(E->getValueKind());
@@ -10815,7 +10819,8 @@ QualType Sema::DeduceTemplateSpecializationFromInitializer(
         // the parentheses source locations, use the begin/end of Inits as the
         // best heuristic.
         InitListExpr TempListInit(getASTContext(), Inits.front()->getBeginLoc(),
-                                  Inits, Inits.back()->getEndLoc());
+                                  Inits, Inits.back()->getEndLoc(),
+                                  /*isExplicit=*/false);
         SynthesizeAggrGuide(&TempListInit);
       }
     }
