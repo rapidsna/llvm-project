@@ -40,7 +40,6 @@ DependencyScanningWorker::DependencyScanningWorker(
 }
 
 DependencyScanningWorker::~DependencyScanningWorker() = default;
-DependencyActionController::~DependencyActionController() = default;
 
 static bool createAndRunToolInvocation(
     ArrayRef<std::string> CommandLine, DependencyScanningAction &Action,
