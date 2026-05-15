@@ -1773,7 +1773,7 @@ void State::addInfoFor(BasicBlock &BB) {
   if (!match(Br->getCondition(), m_ICmpLike(Pred, m_Value(A), m_Value(B))))
     return;
   if (canAddSuccessor(BB, Br->getSuccessor(0))) {
-    addPointerBoundInfoFromOverflowCheck(dyn_cast<ICmpInst>(Br->getCondition()),
+    addPointerBoundInfoFromOverflowCheck(Br->getCondition(),
         DT.getNode(Br->getSuccessor(0)));
     WorkList.emplace_back(FactOrCheck::getConditionFact(
         DT.getNode(Br->getSuccessor(0)), Pred, A, B));
