@@ -61,6 +61,7 @@
 #include "llvm/Support/Compiler.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <cstdlib>
 #include <memory>
@@ -82,7 +83,7 @@ class SymbolContextScope;
 using namespace lldb;
 using namespace lldb_private;
 
-static user_id_t g_value_obj_uid = 0;
+static std::atomic<user_id_t> g_value_obj_uid{0};
 
 // FIXME: this will return true for vector types whose elements
 // are floats. Audit all usages of this function and call
