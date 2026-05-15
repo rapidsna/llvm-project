@@ -939,8 +939,10 @@ bool DependencyScanningAction::runInvocation(
   const bool Result = ScanInstance.ExecuteAction(Action);
 
   if (Result) {
-    if (MDC)
+    if (MDC) {
+      MDC->run();
       MDC->applyDiscoveredDependencies(*OriginalInvocation);
+    }
 
     if (!Controller.finalize(ScanInstance, *OriginalInvocation))
       return false;
