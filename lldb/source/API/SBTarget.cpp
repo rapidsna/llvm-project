@@ -1697,11 +1697,11 @@ const char *SBTarget::GetTriple() {
   LLDB_INSTRUMENT_VA(this);
 
   if (TargetSP target_sp = GetSP()) {
-    std::string triple(target_sp->GetArchitecture().GetTriple().str());
+    const std::string &triple = target_sp->GetArchitecture().GetTriple().str();
     // Unique the string so we don't run into ownership issues since the const
     // strings put the string into the string pool once and the strings never
     // comes out
-    ConstString const_triple(triple.c_str());
+    ConstString const_triple(triple);
     return const_triple.GetCString();
   }
   return nullptr;
@@ -1724,8 +1724,7 @@ const char *SBTarget::GetABIName() {
   LLDB_INSTRUMENT_VA(this);
 
   if (TargetSP target_sp = GetSP()) {
-    std::string abi_name(target_sp->GetABIName().str());
-    ConstString const_name(abi_name.c_str());
+    ConstString const_name(target_sp->GetABIName());
     return const_name.GetCString();
   }
   return nullptr;
@@ -1735,7 +1734,7 @@ const char *SBTarget::GetLabel() const {
   LLDB_INSTRUMENT_VA(this);
 
   if (TargetSP target_sp = GetSP())
-    return ConstString(target_sp->GetLabel().data()).AsCString(nullptr);
+    return ConstString(target_sp->GetLabel()).AsCString(nullptr);
   return nullptr;
 }
 

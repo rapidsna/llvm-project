@@ -1065,7 +1065,7 @@ IRExecutionUnit::MemoryManager::GetSymbolAddressAndPresence(
     const std::string &Name, bool &missing_weak) {
   Log *log = GetLog(LLDBLog::Expressions);
 
-  ConstString name_cs(Name.c_str());
+  ConstString name_cs(Name);
 
   lldb::addr_t ret = m_parent.FindSymbol(name_cs, missing_weak);
 
