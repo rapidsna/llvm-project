@@ -629,8 +629,8 @@ std::shared_ptr<ModuleDepCollector>
 dependencies::initializeScanInstanceDependencyCollector(
     CompilerInstance &ScanInstance,
     std::unique_ptr<DependencyOutputOptions> DepOutputOpts,
-    DependencyConsumer &Consumer, DependencyScanningService &Service,
-    CompilerInvocation &Inv, DependencyActionController &Controller,
+    DependencyScanningService &Service, CompilerInvocation &Inv,
+    DependencyActionController &Controller,
     PrebuiltModulesAttrsMap PrebuiltModulesASTMap,
     SmallVector<StringRef> &StableDirs) {
   // FIXME: Find a way to implement this via a DependencyConsumer.
@@ -642,8 +642,8 @@ dependencies::initializeScanInstanceDependencyCollector(
   }
 
   auto MDC = std::make_shared<ModuleDepCollector>(
-      Service, std::move(DepOutputOpts), ScanInstance, Consumer, Controller,
-      Inv, std::move(PrebuiltModulesASTMap), StableDirs);
+      Service, std::move(DepOutputOpts), ScanInstance, Controller, Inv,
+      std::move(PrebuiltModulesASTMap), StableDirs);
   ScanInstance.addDependencyCollector(MDC);
   ScanInstance.setGenModuleActionWrapper(
       [&Controller = Controller](const FrontendOptions &Opts,
@@ -921,8 +921,8 @@ bool DependencyScanningAction::runInvocation(
                                     /*ForceIncludeSystemHeaders=*/false);
 
   MDC = initializeScanInstanceDependencyCollector(
-      ScanInstance, std::move(DepOutputOpts), Consumer, Service,
-      *OriginalInvocation, Controller, *MaybePrebuiltModulesASTMap, StableDirs);
+      ScanInstance, std::move(DepOutputOpts), Service, *OriginalInvocation,
+      Controller, *MaybePrebuiltModulesASTMap, StableDirs);
 
   // Normally this would be handled by GeneratePCHAction
   if (ScanInstance.getFrontendOpts().ProgramAction == frontend::GeneratePCH)
@@ -940,7 +940,7 @@ bool DependencyScanningAction::runInvocation(
 
   if (Result) {
     if (MDC) {
-      MDC->run();
+      MDC->run(Consumer);
       MDC->applyDiscoveredDependencies(*OriginalInvocation);
     }
 
