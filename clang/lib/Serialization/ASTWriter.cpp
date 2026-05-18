@@ -1613,7 +1613,7 @@ void ASTWriter::WriteControlBlock(Preprocessor &PP, StringRef isysroot) {
     Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 6)); // File size
     Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 6)); // File timestamp
     Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Fixed, 1)); // CASIDIsKey
-    Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 6)); // Implicit suff len
+    Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 6)); // File name raw kind
     Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 6)); // File name len
     Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::VBR, 6)); // Cache key len
     Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Blob)); // Strings
@@ -1655,9 +1655,10 @@ void ASTWriter::WriteControlBlock(Preprocessor &PP, StringRef isysroot) {
         bool CASIDIsKey = M.Kind == serialization::MK_ImplicitModule;
         Record.push_back(CASIDIsKey);
 
+        Record.push_back(M.FileName.getRawKind());
+
         llvm::append_range(Blob, M.Signature);
 
-        Record.push_back(M.FileName.getImplicitModuleSuffixLength());
         AddPathBlob(M.FileName, Record, Blob);
         if (CASIDIsKey)
           AddStringBlob(M.ModuleCacheKey, Record, Blob);

@@ -717,11 +717,16 @@ IntrusiveRefCntPtr<ASTReader> CompilerInstance::createPCHExternalASTSource(
   ASTReader::ListenerScope ReadModuleNamesListener(*Reader,
                                                    std::move(Listener));
 
+  ModuleFileName ModuleFilename = ModuleFileName::makeExplicit(Path);
+
   if (PCHBuffer) {
-    Reader->addInMemoryBuffer(Path, std::move(PCHBuffer));
+    off_t PCHBufferSize = PCHBuffer->getBufferSize();
+    Reader->getModuleManager().getModuleCache().getInMemoryModuleCache().addPCM(
+        Path, std::move(PCHBuffer), PCHBufferSize, /*ModTime=*/0);
+    ModuleFilename = ModuleFileName::makeInMemory(Path);
   }
 
-  switch (Reader->ReadAST(ModuleFileName::makeExplicit(Path),
+  switch (Reader->ReadAST(ModuleFilename,
                           Preamble ? serialization::MK_Preamble
                                    : serialization::MK_PCH,
                           SourceLocation(), ASTReader::ARR_None)) {
