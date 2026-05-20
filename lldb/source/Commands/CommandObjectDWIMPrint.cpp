@@ -36,7 +36,8 @@ CommandObjectDWIMPrint::CommandObjectDWIMPrint(CommandInterpreter &interpreter)
     : CommandObjectRaw(interpreter, "dwim-print",
                        "Print a variable or expression.",
                        "dwim-print [<variable-name> | <expression>]",
-                       eCommandProcessMustBePaused | eCommandTryTargetAPILock) {
+                       eCommandProcessMustBePaused | eCommandTryTargetAPILock |
+                           eCommandAllowsDummyTarget) {
 
   AddSimpleArgumentList(eArgTypeVarName);
 
