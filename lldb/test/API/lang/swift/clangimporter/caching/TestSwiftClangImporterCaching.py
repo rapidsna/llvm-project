@@ -6,7 +6,7 @@ import lldbsuite.test.lldbutil as lldbutil
 class TestSwiftClangImporterCaching(TestBase):
 
     # Don't run ClangImporter tests if Clangimporter is disabled.
-    @skipIf(swift_module_importer="dwarfimporter")
+    @skipIf(swift_module_importer="noclang")
     @skipIf(setting=("symbols.swift-precise-compiler-invocation", "false"))
     @skipUnlessDarwin
     @swiftTest
