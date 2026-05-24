@@ -115,7 +115,7 @@ public:
   bool BeginSourceFileAction(CompilerInstance &CI) override;
 
   GeneratePCHAction(bool SetOnlyIfDifferent = false)
-    : SetOnlyIfDifferent(SetOnlyIfDifferent) {}
+      : SetOnlyIfDifferent(SetOnlyIfDifferent) {}
 };
 
 class GenerateModuleAction : public ASTFrontendAction {
@@ -172,7 +172,7 @@ private:
 
 public:
   GenerateModuleFromModuleMapAction(bool SetOnlyIfDifferent = false)
-    : SetOnlyIfDifferent(SetOnlyIfDifferent) {}
+      : SetOnlyIfDifferent(SetOnlyIfDifferent) {}
 };
 
 /// Generates full BMI (which contains full information to generate the object
