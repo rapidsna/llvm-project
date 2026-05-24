@@ -926,7 +926,8 @@ void CompilerInstance::clearOutputFiles(bool EraseFiles) {
 
 std::unique_ptr<raw_pwrite_stream> CompilerInstance::createDefaultOutputFile(
     bool Binary, StringRef InFile, StringRef Extension, bool RemoveFileOnSignal,
-    bool CreateMissingDirectories, bool ForceUseTemporary, bool SetOnlyIfDifferent) {
+    bool CreateMissingDirectories, bool ForceUseTemporary,
+    bool SetOnlyIfDifferent) {
   StringRef OutputPath = getFrontendOpts().OutputFile;
   std::optional<SmallString<128>> PathStorage;
   if (OutputPath.empty()) {
@@ -1008,11 +1009,9 @@ llvm::cas::ActionCache &CompilerInstance::getOrCreateActionCache() {
   return *ActionCache;
 }
 
-std::unique_ptr<raw_pwrite_stream>
-CompilerInstance::createOutputFile(StringRef OutputPath, bool Binary,
-                                   bool RemoveFileOnSignal, bool UseTemporary,
-                                   bool CreateMissingDirectories,
-                                   bool SetOnlyIfDifferent) {
+std::unique_ptr<raw_pwrite_stream> CompilerInstance::createOutputFile(
+    StringRef OutputPath, bool Binary, bool RemoveFileOnSignal,
+    bool UseTemporary, bool CreateMissingDirectories, bool SetOnlyIfDifferent) {
   Expected<std::unique_ptr<raw_pwrite_stream>> OS =
       createOutputFileImpl(OutputPath, Binary, RemoveFileOnSignal, UseTemporary,
                            CreateMissingDirectories, SetOnlyIfDifferent);
