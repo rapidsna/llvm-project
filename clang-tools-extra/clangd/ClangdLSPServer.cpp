@@ -808,7 +808,7 @@ void ClangdLSPServer::onCommandApplyEdit(const WorkspaceEdit &WE,
 
 void ClangdLSPServer::onCommandApplyTweak(const TweakArgs &Args,
                                           Callback<llvm::json::Value> Reply) {
-  auto Action = [this, Reply = std::move(Reply)](
+  auto Action = [this, Reply = std::move(Reply), &ServerRef = *Server](
                     llvm::Expected<Tweak::Effect> R) mutable {
     if (!R)
       return Reply(R.takeError());
@@ -825,7 +825,7 @@ void ClangdLSPServer::onCommandApplyTweak(const TweakArgs &Args,
     if (R->ApplyEdits.empty())
       return Reply("Tweak applied.");
 
-    if (auto Err = validateEdits(*Server, R->ApplyEdits))
+    if (auto Err = validateEdits(ServerRef, R->ApplyEdits))
       return Reply(std::move(Err));
 
     WorkspaceEdit WE;
@@ -902,53 +902,30 @@ void ClangdLSPServer::onPrepareRename(const TextDocumentPositionParams &Params,
       });
 }
 
-/// Validate that `Edits` are valid and form a `WorkspaceEdit` that contains
-/// the edits as its `changes`.
-static llvm::Expected<WorkspaceEdit>
-formWorkspaceEdit(const FileEdits &Edits, const ClangdServer &Server) {
-  if (auto Err = validateEdits(Server, Edits))
-    return std::move(Err);
-  WorkspaceEdit Result;
-  // FIXME: use documentChanges if SupportDocumentChanges is true.
-  Result.changes.emplace();
-  for (const auto &Rep : Edits) {
-    (*Result.changes)[URI::createFile(Rep.first()).toString()] =
-        Rep.second.asTextEdits();
-  }
-  return Result;
-}
-
 void ClangdLSPServer::onRename(const RenameParams &Params,
                                Callback<WorkspaceEdit> Reply) {
   Path File = std::string(Params.textDocument.uri.file());
   if (!Server->getDraft(File))
     return Reply(llvm::make_error<LSPError>(
         "onRename called for non-added file", ErrorCode::InvalidParams));
-  auto Callback = [Reply = std::move(Reply),
-                   this](llvm::Expected<RenameResult> R) mutable {
-    if (!R)
-      return Reply(R.takeError());
-    llvm::Expected<WorkspaceEdit> WorkspaceEdit =
-        formWorkspaceEdit(R->GlobalChanges, *Server);
-    Reply(std::move(WorkspaceEdit));
-  };
   Server->rename(File, Params.position, Params.newName, Opts.Rename,
-                 std::move(Callback));
-}
-
-void ClangdLSPServer::onIndexedRename(const IndexedRenameParams &Params,
-                                      Callback<WorkspaceEdit> Reply) {
-  auto Callback = [Reply = std::move(Reply),
-                   this](llvm::Expected<FileEdits> Edits) mutable {
-    if (!Edits) {
-      return Reply(Edits.takeError());
-    }
-    llvm::Expected<WorkspaceEdit> WorkspaceEdit =
-        formWorkspaceEdit(*Edits, *Server);
-    Reply(std::move(WorkspaceEdit));
-  };
-  Server->indexedRename(Params.positions, Params.textDocument.uri.file(),
-                        Params.oldName, Params.newName, std::move(Callback));
+                 [File, Params, Reply = std::move(Reply), &ServerRef = *Server](
+                     llvm::Expected<RenameResult> R) mutable {
+                   if (!R)
+                     return Reply(R.takeError());
+                   if (auto Err = validateEdits(ServerRef, R->GlobalChanges))
+                     return Reply(std::move(Err));
+                   WorkspaceEdit Result;
+                   // FIXME: use documentChanges if SupportDocumentChanges is
+                   // true.
+                   Result.changes.emplace();
+                   for (const auto &Rep : R->GlobalChanges) {
+                     (*Result
+                           .changes)[URI::createFile(Rep.first()).toString()] =
+                         Rep.second.asTextEdits();
+                   }
+                   Reply(Result);
+                 });
 }
 
 void ClangdLSPServer::onDocumentDidClose(
