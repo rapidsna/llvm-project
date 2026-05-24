@@ -21,6 +21,7 @@
 #include "lldb/Utility/ArchSpec.h"
 #include "lldb/Utility/ConstString.h"
 #include "lldb/Utility/FileSpec.h"
+#include "lldb/Utility/Locked.h"
 #include "lldb/Utility/Status.h"
 #include "lldb/Utility/UUID.h"
 #include "lldb/Utility/XcodeSDK.h"
@@ -554,6 +555,11 @@ public:
   ///     remains valid as long as the object is around.
   virtual ObjectFile *GetObjectFile();
 
+  /// Like GetObjectFile, but the returned handle holds the Module mutex for
+  /// its lifetime, serializing concurrent access to the ObjectFile against
+  /// other callers using the locked accessors.
+  LockedPtr<ObjectFile> GetObjectFileLocked();
+
   /// Get the unified section list for the module. This is the section list
   /// created by the module's object file and any debug info and symbol files
   /// created by the symbol vendor.
@@ -564,6 +570,10 @@ public:
   /// \return
   ///     Unified module section list.
   virtual SectionList *GetSectionList();
+
+  /// Like GetSectionList, but the returned handle holds the Module mutex for
+  /// its lifetime.
+  LockedPtr<SectionList> GetSectionListLocked();
 
   /// Notify the module that the file addresses for the Sections have been
   /// updated.
@@ -615,11 +625,20 @@ public:
   virtual SymbolFile *GetSymbolFile(bool can_create = true,
                                     Stream *feedback_strm = nullptr);
 
+  /// Like GetSymbolFile, but the returned handle holds the Module mutex for
+  /// its lifetime.
+  LockedPtr<SymbolFile> GetSymbolFileLocked(bool can_create = true,
+                                            Stream *feedback_strm = nullptr);
+
   /// Get the module's symbol table
   ///
   /// If the symbol table has already been loaded, this function returns it.
   /// Otherwise, it will only be loaded when can_create is true.
   Symtab *GetSymtab(bool can_create = true);
+
+  /// Like GetSymtab, but the returned handle holds the Module mutex for its
+  /// lifetime.
+  LockedPtr<Symtab> GetSymtabLocked(bool can_create = true);
 
   /// Get a reference to the UUID value contained in this object.
   ///
