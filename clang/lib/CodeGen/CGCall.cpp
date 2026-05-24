@@ -3172,7 +3172,8 @@ void CodeGenModule::ConstructAttributeList(StringRef Name,
 
     if (FI.getExtParameterInfo(ArgNo).isNoEscape() &&
         isValidPointerAttrType(ParamType, /*RefOkay=*/true))
-      Attrs.addCapturesAttr(llvm::CaptureInfo::none());
+      Attrs.addCapturesAttr(
+          llvm::CaptureInfo(llvm::CaptureComponents::Address));
 
     if (Attrs.hasAttributes()) {
       unsigned FirstIRArg, NumIRArgs;
