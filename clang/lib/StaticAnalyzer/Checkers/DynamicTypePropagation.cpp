@@ -718,6 +718,8 @@ static bool isObjCTypeParamDependent(QualType Type) {
   public:
     IsObjCTypeParamDependentTypeVisitor() = default;
     bool VisitTypedefType(TypedefType *Type) override {
+      static_assert(
+          std::is_same_v<decltype(Type->getDecl()), ObjCTypeParamDecl *>);
       if (isa<ObjCTypeParamDecl>(Type->getDecl())) {
         Result = true;
         return false;
