@@ -928,6 +928,28 @@ void ClangdLSPServer::onRename(const RenameParams &Params,
                  });
 }
 
+void ClangdLSPServer::onIndexedRename(const IndexedRenameParams &Params,
+                                      Callback<WorkspaceEdit> Reply) {
+  Server->indexedRename(
+      Params.positions, Params.textDocument.uri.file(), Params.oldName,
+      Params.newName,
+      [Reply = std::move(Reply), &ServerRef = *Server](
+          llvm::Expected<FileEdits> Edits) mutable {
+        if (!Edits)
+          return Reply(Edits.takeError());
+        if (auto Err = validateEdits(ServerRef, *Edits))
+          return Reply(std::move(Err));
+        WorkspaceEdit Result;
+        // FIXME: use documentChanges if SupportDocumentChanges is true.
+        Result.changes.emplace();
+        for (const auto &Rep : *Edits) {
+          (*Result.changes)[URI::createFile(Rep.first()).toString()] =
+              Rep.second.asTextEdits();
+        }
+        Reply(std::move(Result));
+      });
+}
+
 void ClangdLSPServer::onDocumentDidClose(
     const DidCloseTextDocumentParams &Params) {
   PathRef File = Params.textDocument.uri.file();
