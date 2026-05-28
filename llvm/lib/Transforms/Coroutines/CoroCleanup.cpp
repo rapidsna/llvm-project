@@ -184,7 +184,6 @@ void Lowerer::lowerCoroNoop(IntrinsicInst *II) {
         FnTy, GlobalValue::LinkageTypes::InternalLinkage,
         M.getDataLayout().getProgramAddressSpace(), "__NoopCoro_ResumeDestroy",
         &M);
-    NoopFn->setCallingConv(CallingConv::Fast);
     buildDebugInfoForNoopResumeDestroyFunc(NoopFn);
     auto *Entry = BasicBlock::Create(C, "entry", NoopFn);
     ReturnInst::Create(C, Entry);
