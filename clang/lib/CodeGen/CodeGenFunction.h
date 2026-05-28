@@ -3003,13 +3003,10 @@ public:
   /// aggregate type.
   AggValueSlot CreateAggTemp(QualType T, const Twine &Name = "tmp",
                              RawAddress *Alloca = nullptr) {
-    RawAddress Addr = CreateMemTempWithoutCast(T, Name);
-    if (Alloca)
-      *Alloca = Addr;
     return AggValueSlot::forAddr(
-        Addr, T.getQualifiers(), AggValueSlot::IsNotDestructed,
-        AggValueSlot::DoesNotNeedGCBarriers, AggValueSlot::IsNotAliased,
-        AggValueSlot::DoesNotOverlap);
+        CreateMemTemp(T.getUnqualifiedType(), Name, Alloca), T.getQualifiers(),
+        AggValueSlot::IsNotDestructed, AggValueSlot::DoesNotNeedGCBarriers,
+        AggValueSlot::IsNotAliased, AggValueSlot::DoesNotOverlap);
   }
 
   /* TO_UPSTREAM(BoundsSafety) ON */
