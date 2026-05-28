@@ -26,7 +26,7 @@ class MCSymbol;
 
 /// MachineModuleInfoMachO - This is a MachineModuleInfoImpl implementation
 /// for MachO targets.
-class MachineModuleInfoMachO : public MachineModuleInfoImpl {
+class LLVM_ABI MachineModuleInfoMachO : public MachineModuleInfoImpl {
 public:
   /// The information specific to a Darwin '$auth_ptr' stub.
   struct AuthStubInfo {
@@ -82,7 +82,7 @@ public:
 
 /// MachineModuleInfoELF - This is a MachineModuleInfoImpl implementation
 /// for ELF targets.
-class MachineModuleInfoELF : public MachineModuleInfoImpl {
+class LLVM_ABI MachineModuleInfoELF : public MachineModuleInfoImpl {
   /// GVStubs - These stubs are used to materialize global addresses in PIC
   /// mode.
   DenseMap<MCSymbol *, StubValueTy> GVStubs;
@@ -123,7 +123,7 @@ public:
 
 /// MachineModuleInfoCOFF - This is a MachineModuleInfoImpl implementation
 /// for COFF targets.
-class MachineModuleInfoCOFF : public MachineModuleInfoImpl {
+class LLVM_ABI MachineModuleInfoCOFF : public MachineModuleInfoImpl {
   /// GVStubs - These stubs are used to materialize global addresses in PIC
   /// mode.
   DenseMap<MCSymbol *, StubValueTy> GVStubs;
@@ -145,7 +145,7 @@ public:
 
 /// MachineModuleInfoWasm - This is a MachineModuleInfoImpl implementation
 /// for Wasm targets.
-class MachineModuleInfoWasm : public MachineModuleInfoImpl {
+class LLVM_ABI MachineModuleInfoWasm : public MachineModuleInfoImpl {
   virtual void anchor(); // Out of line virtual method.
 
 public:
