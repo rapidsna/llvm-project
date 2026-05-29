@@ -188,8 +188,8 @@ TEST(DependencyScanningFilesystem, CacheStatOnExists) {
 TEST(DependencyScanningFilesystem, CacheStatFailures) {
   auto InMemoryFS = llvm::makeIntrusiveRefCnt<llvm::vfs::InMemoryFileSystem>();
   InMemoryFS->setCurrentWorkingDirectory("/");
-  InMemoryFS->addFile("/dir/vector", 0, llvm::MemoryBuffer::getMemBuffer(""));
-  InMemoryFS->addFile("/cache/a.pcm", 0, llvm::MemoryBuffer::getMemBuffer(""));
+  InMemoryFS->addFile("/dir/present.h", 0,
+                      llvm::MemoryBuffer::getMemBuffer(""));
 
   auto InstrumentingFS =
       llvm::makeIntrusiveRefCnt<llvm::vfs::TracingFileSystem>(InMemoryFS);
@@ -200,12 +200,49 @@ TEST(DependencyScanningFilesystem, CacheStatFailures) {
   DependencyScanningWorkerFilesystem DepFS(Service, InstrumentingFS);
 
   DepFS.status("/dir");
+  EXPECT_EQ(InstrumentingFS->NumStatusCalls, 1u);
   DepFS.status("/dir");
   EXPECT_EQ(InstrumentingFS->NumStatusCalls, 1u);
 
-  DepFS.status("/dir/vector");
-  DepFS.status("/dir/vector");
+  DepFS.status("/dir/present.h");
   EXPECT_EQ(InstrumentingFS->NumStatusCalls, 2u);
+  DepFS.status("/dir/present.h");
+  EXPECT_EQ(InstrumentingFS->NumStatusCalls, 2u);
+
+  DepFS.status("/dir/missing.h");
+  EXPECT_EQ(InstrumentingFS->NumStatusCalls, 3u);
+  DepFS.status("/dir/missing.h");
+  EXPECT_EQ(InstrumentingFS->NumStatusCalls, 3u);
+}
+
+TEST(DependencyScanningFilesystem, NoNegativeCache) {
+  auto InMemoryFS = llvm::makeIntrusiveRefCnt<llvm::vfs::InMemoryFileSystem>();
+  InMemoryFS->setCurrentWorkingDirectory("/");
+  InMemoryFS->addFile("/dir/present.h", 0,
+                      llvm::MemoryBuffer::getMemBuffer(""));
+
+  auto InstrumentingFS =
+      llvm::makeIntrusiveRefCnt<llvm::vfs::TracingFileSystem>(InMemoryFS);
+
+  DependencyScanningServiceOptions Opts;
+  Opts.CacheNegativeStats = false;
+  DependencyScanningService Service(std::move(Opts));
+  DependencyScanningWorkerFilesystem DepFS(Service, InstrumentingFS);
+
+  DepFS.status("/dir");
+  EXPECT_EQ(InstrumentingFS->NumStatusCalls, 1u);
+  DepFS.status("/dir");
+  EXPECT_EQ(InstrumentingFS->NumStatusCalls, 1u);
+
+  DepFS.status("/dir/present.h");
+  EXPECT_EQ(InstrumentingFS->NumStatusCalls, 2u);
+  DepFS.status("/dir/present.h");
+  EXPECT_EQ(InstrumentingFS->NumStatusCalls, 2u);
+
+  DepFS.status("/dir/missing.h");
+  EXPECT_EQ(InstrumentingFS->NumStatusCalls, 3u);
+  DepFS.status("/dir/missing.h");
+  EXPECT_EQ(InstrumentingFS->NumStatusCalls, 4u);
 }
 
 TEST(DependencyScanningFilesystem, DiagnoseStaleStatFailures) {
