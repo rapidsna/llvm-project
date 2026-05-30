@@ -763,7 +763,6 @@ struct AsyncModuleCompile : PPCallbacks {
     IntrusiveRefCntPtr<llvm::vfs::FileSystem> VFS =
         llvm::makeIntrusiveRefCnt<DependencyScanningWorkerFilesystem>(
             Service, Service.getOpts().MakeVFS());
-
     VFS =
         createVFSFromCompilerInvocation(CI.getInvocation(), CI.getDiagnostics(),
                                         std::move(VFS), Service.getCAS());

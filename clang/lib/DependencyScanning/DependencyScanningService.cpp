@@ -17,7 +17,7 @@
 using namespace clang;
 using namespace dependencies;
 
-bool clang::dependencies::shouldCacheNegativeStatsDefault() {
+bool dependencies::shouldCacheNegativeStatsDefault() {
   if (std::optional<std::string> MaybeNegStats =
           llvm::sys::Process::GetEnv("CLANG_SCAN_CACHE_NEGATIVE_STATS")) {
     if (MaybeNegStats->empty())
