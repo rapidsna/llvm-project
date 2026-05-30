@@ -1400,6 +1400,8 @@ static DWORD nativeAccess(FileAccess Access, OpenFlags Flags) {
     Result |= DELETE;
   if (Flags & OF_UpdateAtime)
     Result |= FILE_WRITE_ATTRIBUTES;
+  if (Flags & OF_UpdateAttributes)
+    Result |= FILE_WRITE_ATTRIBUTES;
   // If a combination of FA_Write and OF_Append are used, the supposed
   // intent is to enable atomic appends, which requires using
   // FILE_APPEND_DATA without GENERIC_WRITE. Otherwise, atomicity
@@ -1412,7 +1414,8 @@ static DWORD nativeAccess(FileAccess Access, OpenFlags Flags) {
 static std::error_code openNativeFileInternal(const Twine &Name,
                                               file_t &ResultFile, DWORD Disp,
                                               DWORD Access, DWORD Flags,
-                                              bool Inherit = false) {
+                                              bool Inherit = false,
+                                              bool AllowDirectory = false) {
   SmallVector<wchar_t, 128> PathUTF16;
   if (std::error_code EC = widenPath(Name, PathUTF16))
     return EC;
@@ -1434,7 +1437,7 @@ static std::error_code openNativeFileInternal(const Twine &Name,
     // no performances issues.
     if (LastError != ERROR_ACCESS_DENIED)
       return EC;
-    if (is_directory(Name))
+    if (!AllowDirectory && is_directory(Name))
       return make_error_code(errc::is_a_directory);
     return EC;
   }
@@ -1453,6 +1456,9 @@ Expected<file_t> openNativeFile(const Twine &Name, CreationDisposition Disp,
 
   DWORD NativeDisp = nativeDisposition(Disp, Flags);
   DWORD NativeAccess = nativeAccess(Access, Flags);
+  DWORD NativeFlags = FILE_ATTRIBUTE_NORMAL;
+  if (Flags & OF_OpenDirectory)
+    NativeFlags |= FILE_FLAG_BACKUP_SEMANTICS;
 
   bool Inherit = false;
   if (Flags & OF_ChildInherit)
@@ -1460,7 +1466,8 @@ Expected<file_t> openNativeFile(const Twine &Name, CreationDisposition Disp,
 
   file_t Result;
   std::error_code EC = openNativeFileInternal(
-      Name, Result, NativeDisp, NativeAccess, FILE_ATTRIBUTE_NORMAL, Inherit);
+      Name, Result, NativeDisp, NativeAccess, NativeFlags, Inherit,
+      /*AllowDirectory=*/Flags & OF_OpenDirectory);
   if (EC)
     return errorCodeToError(EC);
 
