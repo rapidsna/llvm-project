@@ -176,8 +176,8 @@ bool GlobalValue::isInterposable() const {
     return true;
   if (isInterposableLinkage(getLinkage()))
     return true;
-  return getParent() && getParent()->getSemanticInterposition() &&
-         !isDSOLocal();
+  return !isDSOLocal() && getParent() &&
+         getParent()->getSemanticInterposition();
 }
 
 bool GlobalValue::canBenefitFromLocalAlias() const {
