@@ -1077,7 +1077,7 @@ void DwarfLinkerForBinary::AddressManager::findValidRelocsMachO(
     Linker.reportWarning("error reading section", DMO.getObjectFilename());
     return;
   }
-  DataExtractor Data(*ContentsOrErr, Obj.isLittleEndian(), 0);
+  DataExtractor Data(*ContentsOrErr, Obj.isLittleEndian());
   bool SkipNext = false;
 
   for (const object::RelocationRef &Reloc : Section.relocations()) {
