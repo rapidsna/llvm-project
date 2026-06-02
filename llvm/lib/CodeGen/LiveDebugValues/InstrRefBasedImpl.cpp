@@ -1010,7 +1010,6 @@ public:
 //===----------------------------------------------------------------------===//
 
 ValueIDNum ValueIDNum::EmptyValue = {UINT_MAX, UINT_MAX, UINT_MAX};
-ValueIDNum ValueIDNum::TombstoneValue = {UINT_MAX, UINT_MAX, UINT_MAX - 1};
 
 #ifndef NDEBUG
 void ResolvedDbgOp::dump(const MLocTracker *MTrack) const {

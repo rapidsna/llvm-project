@@ -145,7 +145,6 @@ static cl::opt<uint32_t> MaxNumInsnsPerBlock(
 
 template <> struct llvm::DenseMapInfo<GVNPass::Expression> {
   static inline GVNPass::Expression getEmptyKey() { return ~0U; }
-  static inline GVNPass::Expression getTombstoneKey() { return ~1U; }
 
   static unsigned getHashValue(const GVNPass::Expression &E) {
     using llvm::hash_value;
