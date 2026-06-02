@@ -1193,10 +1193,6 @@ public:
     return Selector(uintptr_t(-1));
   }
 
-  static Selector getTombstoneMarker() {
-    return Selector(uintptr_t(-2));
-  }
-
   static ObjCInstanceTypeFamily getInstTypeMethodFamily(Selector sel);
 };
 
@@ -1279,10 +1275,6 @@ template <>
 struct DenseMapInfo<clang::Selector> {
   static clang::Selector getEmptyKey() {
     return clang::Selector::getEmptyMarker();
-  }
-
-  static clang::Selector getTombstoneKey() {
-    return clang::Selector::getTombstoneMarker();
   }
 
   static unsigned getHashValue(clang::Selector S);
