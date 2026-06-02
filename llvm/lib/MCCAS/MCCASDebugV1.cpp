@@ -178,11 +178,6 @@ template <> struct llvm::DenseMapInfo<llvm::dwarf::Form> {
         DenseMapInfo<uint16_t>::getEmptyKey());
   }
 
-  static llvm::dwarf::Form getTombstoneKey() {
-    return static_cast<llvm::dwarf::Form>(
-        DenseMapInfo<uint16_t>::getTombstoneKey());
-  }
-
   static unsigned getHashValue(const llvm::dwarf::Form &OVal) {
     return DenseMapInfo<uint16_t>::getHashValue(OVal);
   }

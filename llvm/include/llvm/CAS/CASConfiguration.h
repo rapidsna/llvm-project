@@ -97,10 +97,6 @@ template <> struct DenseMapInfo<cas::CASConfiguration> {
     return cas::CASConfiguration::getDenseMapEmptyKey();
   }
 
-  static cas::CASConfiguration getTombstoneKey() {
-    return cas::CASConfiguration::getDenseMapTombstoneKey();
-  }
-
   static unsigned getHashValue(const cas::CASConfiguration &config) {
     return config.getHashValue();
   }

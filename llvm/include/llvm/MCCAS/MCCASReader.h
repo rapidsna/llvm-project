@@ -98,11 +98,6 @@ template <> struct DenseMapInfo<mccasformats::reader::CASSectionRef> {
         DenseMapInfo<uint64_t>::getEmptyKey()};
   }
 
-  static mccasformats::reader::CASSectionRef getTombstoneKey() {
-    return mccasformats::reader::CASSectionRef{
-        DenseMapInfo<uint64_t>::getTombstoneKey()};
-  }
-
   static unsigned getHashValue(mccasformats::reader::CASSectionRef ID) {
     return DenseMapInfo<uint64_t>::getHashValue(ID.Idx);
   }
@@ -119,11 +114,6 @@ template <> struct DenseMapInfo<mccasformats::reader::CASFragmentRef> {
         DenseMapInfo<uint64_t>::getEmptyKey()};
   }
 
-  static mccasformats::reader::CASFragmentRef getTombstoneKey() {
-    return mccasformats::reader::CASFragmentRef{
-        DenseMapInfo<uint64_t>::getTombstoneKey()};
-  }
-
   static unsigned getHashValue(mccasformats::reader::CASFragmentRef ID) {
     return DenseMapInfo<uint64_t>::getHashValue(ID.Idx);
   }
@@ -138,11 +128,6 @@ template <> struct DenseMapInfo<mccasformats::reader::CASSymbolRef> {
   static mccasformats::reader::CASSymbolRef getEmptyKey() {
     return mccasformats::reader::CASSymbolRef{
         DenseMapInfo<uint64_t>::getEmptyKey()};
-  }
-
-  static mccasformats::reader::CASSymbolRef getTombstoneKey() {
-    return mccasformats::reader::CASSymbolRef{
-        DenseMapInfo<uint64_t>::getTombstoneKey()};
   }
 
   static unsigned getHashValue(mccasformats::reader::CASSymbolRef ID) {
