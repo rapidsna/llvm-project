@@ -6529,12 +6529,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &Job,
     CmdArgs.push_back(Args.MakeArgString("-crash-diagnostics-dir=" + Dir));
   }
 
-  bool UseSeparateSections = isUseSeparateSections(Triple);
-
-  if (Args.hasFlag(options::OPT_ffunction_sections,
-                   options::OPT_fno_function_sections, UseSeparateSections)) {
-    CmdArgs.push_back("-ffunction-sections");
-  }
+  addSeparateSectionFlags(Triple, Args, CmdArgs);
 
   if (Arg *A = Args.getLastArg(options::OPT_fbasic_block_address_map,
                                options::OPT_fno_basic_block_address_map)) {
@@ -6578,12 +6573,6 @@ void Clang::ConstructJob(Compilation &C, const JobAction &Job,
       D.Diag(diag::err_drv_unsupported_opt_for_target)
           << A->getAsString(Args) << TripleStr;
     }
-  }
-
-  bool HasDefaultDataSections = Triple.isOSBinFormatXCOFF();
-  if (Args.hasFlag(options::OPT_fdata_sections, options::OPT_fno_data_sections,
-                   UseSeparateSections || HasDefaultDataSections)) {
-    CmdArgs.push_back("-fdata-sections");
   }
 
   Args.addOptOutFlag(CmdArgs, options::OPT_funique_section_names,
