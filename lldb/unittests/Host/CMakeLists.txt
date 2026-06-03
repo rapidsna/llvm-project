@@ -24,6 +24,12 @@ set (FILES
   ${SWIFT_SOURCES}
 )
 
+if (LLDB_ENABLE_PYTHON)
+  list(APPEND FILES
+    PythonRuntimeLoaderTest.cpp
+  )
+endif()
+
 if (UNIX)
   list(APPEND FILES
     posix/HostTest.cpp
