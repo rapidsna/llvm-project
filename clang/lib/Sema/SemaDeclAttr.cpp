@@ -7530,6 +7530,8 @@ public:
     IsFPtr = false;
     EffectiveLevel = Level;
     Ty = DeclTy;
+    if (const auto *FD = dyn_cast<FunctionDecl>(D))
+      Ty = FD->getReturnType();
     for (unsigned i = 0; i != Level; ++i) {
       if (!Ty->isPointerType())
         break;
@@ -7595,8 +7597,7 @@ void Sema::applyPtrCountedByEndedByAttr(Decl *D, unsigned Level,
   if (!IsEndedBy) {
     // Nullability as indicated by _Nonnull or _Nullable. Does not impact
     // semantics, only warnings.
-    NullabilityKindOrNone AttrNullability =
-        Info.DeclTy->getNullability();
+    NullabilityKindOrNone AttrNullability = Info.Ty->getNullability();
     if (OrNull) {
       // Function parameter/return value attribute that *does* impact semantics,
       // letting the compiler elide null checks. This could remove bounds safety
