@@ -128,7 +128,6 @@ private:
   llvm::PrefixMapper &PrefixMapper;
 
   std::optional<cas::ObjectRef> PCHRef;
-  llvm::BitVector SeenIncludeFiles;
   SmallVector<cas::IncludeTree::FileList::FileEntry> IncludedFiles;
   SmallVector<cas::ObjectRef> IncludedFileLists;
   std::optional<cas::ObjectRef> PredefinesBufferRef;
@@ -873,12 +872,6 @@ IncludeTreeBuilder::getObjectForFileNonCached(FileManager &FM,
                                               const SrcMgr::FileInfo &FI) {
   OptionalFileEntryRef FE = FI.getContentCache().OrigEntry;
   assert(FE);
-
-  // Mark the include as already seen.
-  if (FE->getUID() >= SeenIncludeFiles.size())
-    SeenIncludeFiles.resize(FE->getUID() + 1);
-  SeenIncludeFiles.set(FE->getUID());
-
   return addToFileList(FM, *FE);
 }
 
