@@ -8435,7 +8435,7 @@ public:
 
 private:
   analyze_format_string::ArgType ArgType;
-  analyze_format_string::LengthModifier::Kind LengthMod;
+  analyze_format_string::LengthModifier LengthMod;
   StringRef SpecifierLetter;
   CharSourceRange Range;
   SourceLocation ElementLoc;
@@ -8449,7 +8449,7 @@ private:
 
 public:
   EquatableFormatArgument(CharSourceRange Range, SourceLocation ElementLoc,
-                          analyze_format_string::LengthModifier::Kind LengthMod,
+                          analyze_format_string::LengthModifier LengthMod,
                           StringRef SpecifierLetter,
                           analyze_format_string::ArgType ArgType,
                           FormatArgumentRole Role,
@@ -8464,7 +8464,7 @@ public:
   SourceLocation getSourceLocation() const { return ElementLoc; }
   CharSourceRange getSourceRange() const { return Range; }
   analyze_format_string::LengthModifier getLengthModifier() const {
-    return analyze_format_string::LengthModifier(nullptr, LengthMod);
+    return LengthMod;
   }
   void setModifierFor(unsigned V) { ModifierFor = V; }
 
@@ -8812,7 +8812,7 @@ bool DecomposePrintfHandler::HandlePrintfSpecifier(
     Specs.emplace_back(
         getSpecifierRange(startSpecifier, specifierLen),
         getLocationOfByte(FieldWidth.getStart()),
-        analyze_format_string::LengthModifier::None, FieldWidth.getCharacters(),
+        analyze_format_string::LengthModifier(), FieldWidth.getCharacters(),
         FieldWidth.getArgType(S.Context),
         EquatableFormatArgument::FAR_FieldWidth,
         EquatableFormatArgument::SS_None,
@@ -8827,7 +8827,7 @@ bool DecomposePrintfHandler::HandlePrintfSpecifier(
     Specs.emplace_back(
         getSpecifierRange(startSpecifier, specifierLen),
         getLocationOfByte(Precision.getStart()),
-        analyze_format_string::LengthModifier::None, Precision.getCharacters(),
+        analyze_format_string::LengthModifier(), Precision.getCharacters(),
         Precision.getArgType(S.Context), EquatableFormatArgument::FAR_Precision,
         EquatableFormatArgument::SS_None,
         Precision.usesPositionalArg() ? Precision.getPositionalArgIndex() - 1
@@ -8855,7 +8855,7 @@ bool DecomposePrintfHandler::HandlePrintfSpecifier(
 
   Specs.emplace_back(
       getSpecifierRange(startSpecifier, specifierLen),
-      getLocationOfByte(CS.getStart()), FS.getLengthModifier().getKind(),
+      getLocationOfByte(CS.getStart()), FS.getLengthModifier(),
       CS.getCharacters(), FS.getArgType(S.Context, isObjCContext()),
       EquatableFormatArgument::FAR_Data, Sensitivity, SpecIndex, 0);
 
@@ -8864,7 +8864,7 @@ bool DecomposePrintfHandler::HandlePrintfSpecifier(
       CS.getKind() == analyze_format_string::ConversionSpecifier::FreeBSDDArg) {
     Specs.emplace_back(getSpecifierRange(startSpecifier, specifierLen),
                        getLocationOfByte(CS.getStart()),
-                       analyze_format_string::LengthModifier::None,
+                       analyze_format_string::LengthModifier(),
                        CS.getCharacters(),
                        analyze_format_string::ArgType::CStrTy,
                        EquatableFormatArgument::FAR_Auxiliary, Sensitivity,
