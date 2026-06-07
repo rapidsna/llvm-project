@@ -1189,10 +1189,6 @@ public:
     return getStringFormatFamilyImpl(*this);
   }
 
-  static Selector getEmptyMarker() {
-    return Selector(uintptr_t(-1));
-  }
-
   static ObjCInstanceTypeFamily getInstTypeMethodFamily(Selector sel);
 };
 
@@ -1273,10 +1269,6 @@ namespace llvm {
 /// DenseSets.
 template <>
 struct DenseMapInfo<clang::Selector> {
-  static clang::Selector getEmptyKey() {
-    return clang::Selector::getEmptyMarker();
-  }
-
   static unsigned getHashValue(clang::Selector S);
 
   static bool isEqual(clang::Selector LHS, clang::Selector RHS) {
