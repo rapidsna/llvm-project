@@ -356,10 +356,10 @@ public:
             auto types = decl_vendor->FindTypes(ConstString(mangledName), 1);
             if (!types.empty()) {
               clang_type = types[0];
-              LLDB_LOGV(GetLog(LLDBLog::Types),
-                        "[LLDBTypeInfoProvider] using ObjC runtime decl vendor "
-                        "type for {0}",
-                        mangledName);
+              LLDB_LOG_VERBOSE(GetLog(LLDBLog::Types),
+                               "[LLDBTypeInfoProvider] using ObjC runtime decl "
+                               "vendor type for {0}",
+                               mangledName);
             } else {
               LLDB_LOG(
                   GetLog(LLDBLog::Types),

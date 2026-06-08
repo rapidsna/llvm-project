@@ -1705,8 +1705,9 @@ loadModuleFromCAS(llvm::StringRef cas_id, llvm::StringRef name_for_diagnostics,
         id.takeError(),
         [&](std::unique_ptr<llvm::StringError> SE) -> llvm::Error {
           if (SE->convertToErrorCode() == std::errc::invalid_argument) {
-            LLDB_LOGV(GetLog(LLDBLog::Modules),
-                      "'{0}' is not a CAS id: {1}", cas_id, SE->getMessage());
+            LLDB_LOG_VERBOSE(GetLog(LLDBLog::Modules),
+                             "'{0}' is not a CAS id: {1}", cas_id,
+                             SE->getMessage());
             return llvm::Error::success();
           }
           return llvm::Error(std::move(SE));
