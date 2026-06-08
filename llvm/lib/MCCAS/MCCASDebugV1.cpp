@@ -173,11 +173,6 @@ mccasformats::v1::getFormSize(dwarf::Form Form, dwarf::FormParams FP,
 }
 
 template <> struct llvm::DenseMapInfo<llvm::dwarf::Form> {
-  static llvm::dwarf::Form getEmptyKey() {
-    return static_cast<llvm::dwarf::Form>(
-        DenseMapInfo<uint16_t>::getEmptyKey());
-  }
-
   static unsigned getHashValue(const llvm::dwarf::Form &OVal) {
     return DenseMapInfo<uint16_t>::getHashValue(OVal);
   }

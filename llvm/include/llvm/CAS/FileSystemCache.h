@@ -365,9 +365,6 @@ private:
 
 struct FileSystemCache::DirectoryListingInfo {
   using DirectoryEntry = FileSystemCache::DirectoryEntry;
-  static DirectoryEntry *getEmptyKey() {
-    return DenseMapInfo<DirectoryEntry *>::getEmptyKey();
-  }
   static unsigned getHashValue(const DirectoryEntry *V) {
     return getHashValue(V->getName());
   }
@@ -379,8 +376,6 @@ struct FileSystemCache::DirectoryListingInfo {
     return DenseMapInfo<StringRef>::getHashValue(Name);
   }
   static bool isEqual(StringRef Name, const DirectoryEntry *RHS) {
-    if (RHS == getEmptyKey())
-      return false;
     return Name == RHS->getName();
   }
 };

@@ -93,11 +93,6 @@ private:
 namespace llvm {
 
 template <> struct DenseMapInfo<mccasformats::reader::CASSectionRef> {
-  static mccasformats::reader::CASSectionRef getEmptyKey() {
-    return mccasformats::reader::CASSectionRef{
-        DenseMapInfo<uint64_t>::getEmptyKey()};
-  }
-
   static unsigned getHashValue(mccasformats::reader::CASSectionRef ID) {
     return DenseMapInfo<uint64_t>::getHashValue(ID.Idx);
   }
@@ -109,11 +104,6 @@ template <> struct DenseMapInfo<mccasformats::reader::CASSectionRef> {
 };
 
 template <> struct DenseMapInfo<mccasformats::reader::CASFragmentRef> {
-  static mccasformats::reader::CASFragmentRef getEmptyKey() {
-    return mccasformats::reader::CASFragmentRef{
-        DenseMapInfo<uint64_t>::getEmptyKey()};
-  }
-
   static unsigned getHashValue(mccasformats::reader::CASFragmentRef ID) {
     return DenseMapInfo<uint64_t>::getHashValue(ID.Idx);
   }
@@ -125,11 +115,6 @@ template <> struct DenseMapInfo<mccasformats::reader::CASFragmentRef> {
 };
 
 template <> struct DenseMapInfo<mccasformats::reader::CASSymbolRef> {
-  static mccasformats::reader::CASSymbolRef getEmptyKey() {
-    return mccasformats::reader::CASSymbolRef{
-        DenseMapInfo<uint64_t>::getEmptyKey()};
-  }
-
   static unsigned getHashValue(mccasformats::reader::CASSymbolRef ID) {
     return DenseMapInfo<uint64_t>::getHashValue(ID.Idx);
   }
