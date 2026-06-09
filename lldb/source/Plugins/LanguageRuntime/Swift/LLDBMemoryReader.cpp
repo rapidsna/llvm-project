@@ -438,9 +438,9 @@ LLDBMemoryReader::resolveIndirectAddressAtOffset(
   addr_t got_key = lldb_offset_address.GetLoadAddress(&target);
   if (auto cache_it = m_got_entry_cache.find(got_key);
       cache_it != m_got_entry_cache.end()) {
-    LLDB_LOGV(log,
-              "[MemoryReader::resolveAddressAtOffset] GOT cache hit for {0:x}",
-              got_key);
+    LLDB_LOG_VERBOSE(log,
+                     "[MemoryReader::resolveAddressAtOffset] GOT cache hit for {0:x}",
+                     got_key);
     return swift::remote::RemoteAddress(
         cache_it->second, swift::remote::RemoteAddress::DefaultAddressSpace);
   }
