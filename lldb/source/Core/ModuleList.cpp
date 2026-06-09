@@ -1749,7 +1749,7 @@ llvm::Expected<ModuleSpec> ModuleList::LoadModuleFromCAS(
                    "CAS: {0}",
                    name_for_diagnostics, cas_id);
   if (not_a_cas_id)
-    LLDB_LOGV(GetLog(LLDBLog::Modules), "'{0}' is not a CAS id", cas_id);
+    LLDB_LOG_VERBOSE(GetLog(LLDBLog::Modules), "'{0}' is not a CAS id", cas_id);
   return ModuleSpec();
 }
 
