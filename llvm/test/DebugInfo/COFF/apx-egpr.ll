@@ -1,5 +1,5 @@
-; RUN: llc -mattr=+egpr -mtriple=x86_64-windows-msvc < %s | FileCheck %s --check-prefix=ASM
-; RUN: llc -mattr=+egpr -mtriple=x86_64-windows-msvc < %s -filetype=obj | llvm-readobj --codeview - | FileCheck %s --check-prefix=OBJ
+; RUN: llc -mattr=+egpr -mtriple=x86_64-windows-msvc -experimental-debug-variable-locations < %s | FileCheck %s --check-prefix=ASM
+; RUN: llc -mattr=+egpr -mtriple=x86_64-windows-msvc -experimental-debug-variable-locations < %s -filetype=obj | llvm-readobj --codeview - | FileCheck %s --check-prefix=OBJ
 
 ; ASM: #DEBUG_VALUE: test:x <- $r16d
 ; OBJ:      DefRangeRegisterSym {
