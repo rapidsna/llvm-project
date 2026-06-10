@@ -3027,11 +3027,38 @@ recursive_directory_iterator::increment(std::error_code &EC) {
 }
 
 const char File::ID = 0;
+
+void TracingFileSystem::printImpl(raw_ostream &OS, PrintType Type,
+                                  unsigned IndentLevel) const {
+  printIndent(OS, IndentLevel);
+  OS << "TracingFileSystem\n";
+  if (Type == PrintType::Summary)
+    return;
+
+  printIndent(OS, IndentLevel);
+  OS << "NumStatusCalls=" << NumStatusCalls << "\n";
+  printIndent(OS, IndentLevel);
+  OS << "NumOpenFileForReadCalls=" << NumOpenFileForReadCalls << "\n";
+  printIndent(OS, IndentLevel);
+  OS << "NumDirBeginCalls=" << NumDirBeginCalls << "\n";
+  printIndent(OS, IndentLevel);
+  OS << "NumGetRealPathCalls=" << NumGetRealPathCalls << "\n";
+  printIndent(OS, IndentLevel);
+  OS << "NumExistsCalls=" << NumExistsCalls << "\n";
+  printIndent(OS, IndentLevel);
+  OS << "NumIsLocalCalls=" << NumIsLocalCalls << "\n";
+
+  if (Type == PrintType::Contents)
+    Type = PrintType::Summary;
+  getUnderlyingFS().print(OS, Type, IndentLevel + 1);
+}
+
 const char FileSystem::ID = 0;
 const char OverlayFileSystem::ID = 0;
 const char ProxyFileSystem::ID = 0;
 const char InMemoryFileSystem::ID = 0;
 const char RedirectingFileSystem::ID = 0;
+const char TracingFileSystem::ID = 0;
 
 // FIXME: Temporarily put the CASBackedFile::ID in Support library to workaround
 // the layer issue that `dyn_cast` check for the type needs to happen here.
