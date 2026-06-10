@@ -142,6 +142,7 @@ set(riscv_files
   riscv_corev_alu.h
   riscv_mips.h
   riscv_nds.h
+  riscv_packed_simd.h
   sifive_vector.h
   )
 
