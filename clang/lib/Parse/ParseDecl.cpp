@@ -3363,7 +3363,7 @@ void Parser::DistributeCLateParsedAttrs(Declarator &D, Decl *Dcl,
                                             Scope::DeclScope));
       const DeclaratorChunk::FunctionTypeInfo &FTI = FuncChunk.Fun;
       for (unsigned i = 0; i != FTI.NumParams; ++i) {
-        ParmVarDecl *Param = cast<ParmVarDecl>(FTI.Params[i].Param);
+        ParmVarDecl *Param = cast_or_null<ParmVarDecl>(FTI.Params[i].Param);
         Actions.ActOnReenterCXXMethodParameter(getCurScope(), Param);
       }
       LateAttrs = &ProtoLateAttrs;
@@ -3380,6 +3380,18 @@ void Parser::DistributeCLateParsedAttrs(Declarator &D, Decl *Dcl,
 #endif
   /* TO_UPSTREAM(BoundsSafety) OFF */
 }
+
+/* TO_UPSTREAM(BoundsSafety) ON */
+void Parser::ParseLexedFunctionReturnTypeBoundsAttrs(Declarator &D, Decl *FD) {
+  std::optional<Sema::ContextRAII> FnContext;
+  if (FunctionDecl *Fn = dyn_cast_or_null<FunctionDecl>(FD))
+    FnContext.emplace(Actions, Fn, /*NewThisContext=*/true);
+
+  LateParsedAttrList LateAttrs(/*ParseSoon=*/true);
+  DistributeCLateParsedAttrs(D, FD, &LateAttrs);
+  assert(LateAttrs.empty() && "stray late attrs before the function chunk");
+}
+/* TO_UPSTREAM(BoundsSafety) OFF */
 
 void Parser::ParsePtrauthQualifier(ParsedAttributes &Attrs) {
   assert(Tok.is(tok::kw___ptrauth));
@@ -6901,50 +6913,6 @@ void Parser::ParseDeclaratorInternal(Declarator &D,
     Actions.runWithSufficientStackSpace(
         D.getBeginLoc(), [&] { ParseDeclaratorInternal(D, DirectDeclParser); });
     if (Kind == tok::star) {
-      /* TO_UPSTREAM(BoundsSafety) ON */
-      // maybe we don't do it here.
-#if 0
-      // We parse '__counted_by' or '__ended_by' attributes immediately
-      // if this is a function declarator. We need these attributes to be
-      // parsed early so we can construct the full function type before Sema
-      // is checking and merging the function declaration with the previous
-      // declaration.
-      if (getLangOpts().hasBoundsSafetyAttributes() &&
-          getLangOpts().ExperimentalLateParseAttributes && !LateAttrs.empty()) {
-        unsigned FuncIndex = 0;
-        if (D.isFunctionDeclarator(FuncIndex)) {
-          // Upstream doesn't support bounds safety attributes on functions yet
-          // so avoid taking this path when bounds safety is off.
-          DeclaratorChunk::FunctionTypeInfo FTI = D.getFunctionTypeInfo();
-          ParseScope PrototypeScope(this, Scope::FunctionPrototypeScope |
-                                          Scope::FunctionDeclarationScope |
-                                          Scope::DeclScope);
-          for (unsigned i = 0; i != FTI.NumParams; ++i) {
-            if (Decl *D = FTI.Params[i].Param) {
-              // Param can be missing if the declaration is malformed. The
-              // diagnostic is emitted later.
-              Actions.ActOnReenterCXXMethodParameter(
-                  getCurScope(), cast<ParmVarDecl>(D));
-            }
-          }
-          // Handling nested return type with counted_by, e.g.:
-          //  T *__counted_by(x) *foo(size_t x);
-          unsigned NestedLevel = 0;
-          for (unsigned i = FuncIndex + 1; i != D.getNumTypeObjects(); ++i) {
-            if (D.getTypeObject(i).Kind == DeclaratorChunk::Pointer)
-              NestedLevel++;
-          }
-
-          if (NestedLevel != 0) {
-            for (auto *LateAttr : LateAttrs) {
-              LateAttr->NestedTypeLevel = NestedLevel;
-            }
-          }
-          ParseLexedCAttributeList(LateAttrs, false, &D.getAttributes(), LateAttrs);
-        }
-      }
-#endif
-      /* TO_UPSTREAM(BoundsSafety) OFF */
       // Remember that we parsed a pointer type, and remember the type-quals.
       D.AddTypeInfo(DeclaratorChunk::getPointer(
                         DS.getTypeQualifiers(), Loc, DS.getConstSpecLoc(),
