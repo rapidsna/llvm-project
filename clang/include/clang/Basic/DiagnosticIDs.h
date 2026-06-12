@@ -36,14 +36,14 @@ enum class Group;
 enum {
   DIAG_SIZE_COMMON = 300,
   DIAG_SIZE_DRIVER = 400,
-  DIAG_SIZE_FRONTEND = 213, // 5 extra downstream
+  DIAG_SIZE_FRONTEND = 200 + /*extra downstream=*/14,
   DIAG_SIZE_SERIALIZATION = 120,
   DIAG_SIZE_LEX = 500,
   DIAG_SIZE_PARSE = 800,
   DIAG_SIZE_AST = 300,
   DIAG_SIZE_COMMENT = 100,
   DIAG_SIZE_CROSSTU = 100,
-  DIAG_SIZE_SEMA = 6300, // TO_UPSTREAM(BoundsSafety): need more diagIDs.
+  DIAG_SIZE_SEMA = 6000 + /*extra downstream=*/300, // TO_UPSTREAM(BoundsSafety): need more diagIDs.
   DIAG_SIZE_ANALYSIS = 100,
   DIAG_SIZE_REFACTORING = 1000,
   DIAG_SIZE_INSTALLAPI = 100,
