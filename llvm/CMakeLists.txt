@@ -935,17 +935,6 @@ if(LLVM_CAS_ENABLE_REMOTE_CACHE)
 endif()
 
 include(HandleDoxygen)
-if (LLVM_ENABLE_DOXYGEN)
-  if (DOXYGEN_FOUND)
-    # If we find doxygen and we want to enable doxygen by default create a
-    # global aggregate doxygen target for generating llvm and any/all
-    # subprojects doxygen documentation.
-    if (LLVM_BUILD_DOCS)
-      add_custom_target(doxygen ALL)
-    endif()
-  endif()
-endif()
-
 
 set(LLVM_INSTALL_DOXYGEN_HTML_DIR "${CMAKE_INSTALL_DOCDIR}/llvm/doxygen-html"
     CACHE STRING "Doxygen-generated HTML documentation install directory")

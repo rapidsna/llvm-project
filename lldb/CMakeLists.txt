@@ -42,7 +42,7 @@ if(LLDB_BUILT_STANDALONE)
   set(CMAKE_CXX_EXTENSIONS NO)
 
   include(LLDBStandalone)
-else()
+  include(HandleDoxygen)
   set(SWIFT_BINARY_DIR ${CMAKE_BINARY_DIR})
   set(SWIFT_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/include)
   set(SWIFT_LIBRARY_DIR "${CMAKE_BINARY_DIR}/${CMAKE_CFG_INTDIR}/lib")
