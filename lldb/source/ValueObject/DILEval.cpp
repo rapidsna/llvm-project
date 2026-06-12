@@ -464,7 +464,7 @@ Interpreter::Visit(const IdentifierNode &node) {
     // Implement LanguageCPlusPlus::GetParentNameIfClosure and upstream this.
     // rdar://152321823
     if (std::string message =
-            m_exe_ctx_scope->GetVariableNotCapturedDiagnostic(node.GetName());
+            m_stack_frame.GetVariableNotCapturedDiagnostic(node.GetName());
         !message.empty())
       return llvm::make_error<DILDiagnosticError>(
           m_expr, message, node.GetLocation(), node.GetName().size());
