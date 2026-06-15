@@ -8416,8 +8416,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &Job,
   // By default, -gno-record-gcc-switches is set on and no recording.
   auto GRecordSwitches = false;
   auto FRecordSwitches = false;
+  bool DXRecordSwitches = false;
   if (shouldRecordCommandLine(TC, Args, FRecordSwitches, GRecordSwitches,
-			      GReproducible)) {
+                              DXRecordSwitches, GReproducible)) {
     auto FlagsArgString = renderEscapedCommandLine(TC, Args);
     if (TC.UseDwarfDebugFlags() || GRecordSwitches) {
       CmdArgs.push_back("-dwarf-debug-flags");
@@ -8425,6 +8426,10 @@ void Clang::ConstructJob(Compilation &C, const JobAction &Job,
     }
     if (FRecordSwitches) {
       CmdArgs.push_back("-record-command-line");
+      CmdArgs.push_back(FlagsArgString);
+    }
+    if (DXRecordSwitches) {
+      CmdArgs.push_back("-fdx-record-command-line");
       CmdArgs.push_back(FlagsArgString);
     }
   }
