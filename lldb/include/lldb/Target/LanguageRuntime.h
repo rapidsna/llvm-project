@@ -54,7 +54,7 @@ protected:
   LanguageRuntime *m_language_runtime;
   lldb::SearchFilterSP m_filter_sp;
 
-  lldb::SearchFilterSP DoCreateCopy() override;
+  std::unique_ptr<SearchFilter> DoCreateCopy() override;
 
   void UpdateModuleListIfNeeded();
 };
