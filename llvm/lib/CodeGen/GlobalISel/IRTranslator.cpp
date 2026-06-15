@@ -1668,6 +1668,9 @@ bool IRTranslator::translateGetElementPtr(const User &U,
     WantSplatVector = VectorWidth > 1;
   }
 
+  if (cast<GEPOperator>(U).hasAllZeroIndices())
+    return translateCopy(U, Op0, MIRBuilder);
+
   // We might need to splat the base pointer into a vector if the offsets
   // are vectors.
   if (WantSplatVector && !PtrTy.isVector()) {
