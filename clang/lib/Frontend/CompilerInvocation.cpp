@@ -2539,6 +2539,16 @@ bool CompilerInvocation::ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args,
   }
   /* TO_UPSTREAM(BoundsSafety) OFF*/
 
+  if (!Opts.HLSLRecordCommandLine.empty()) {
+    auto ParsedArgs =
+        clang::parseEscapedCommandLine(Opts.HLSLRecordCommandLine.c_str());
+    if (!ParsedArgs)
+      Diags.Report(diag::err_drv_invalid_escaped_command_line)
+          << llvm::toString(ParsedArgs.takeError());
+    else
+      Opts.HLSLParsedCommandLine = std::move(*ParsedArgs);
+  }
+
   return Diags.getNumErrors() == NumErrorsBefore;
 }
 
