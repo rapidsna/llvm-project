@@ -2971,6 +2971,14 @@ public:
   };
   static BoundsAttrFlags getBoundsAttrFlags(AttributeCommonInfo::Kind K);
 
+  /// Validates that a pointer's pointee type is compatible with __counted_by.
+  /// If the pointee is incomplete/function/sizeless/FAM and CountInBytes is
+  /// false, emits a diagnostic and recovers by setting CountInBytes = true.
+  /// \returns true always (recoverable).
+  bool DiagnoseCountedByPointeeType(QualType PointerTy, SourceLocation AttrLoc,
+                                    StringRef DiagName, bool &CountInBytes,
+                                    bool OrNull);
+
   /* TO_UPSTREAM(BoundsSafety) OFF*/
 
 
