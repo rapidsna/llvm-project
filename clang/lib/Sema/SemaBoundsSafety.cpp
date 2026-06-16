@@ -55,6 +55,50 @@ Sema::getBoundsAttrFlags(AttributeCommonInfo::Kind K) {
   return Flags;
 }
 
+bool Sema::DiagnoseCountedByPointeeType(QualType PointerTy,
+                                        SourceLocation AttrLoc,
+                                        StringRef DiagName, bool &CountInBytes,
+                                        bool OrNull) {
+  const auto *PT = PointerTy->getAs<PointerType>();
+  if (!PT)
+    return true;
+
+  if (CountInBytes)
+    return true;
+
+  QualType PointeeTy = PT->getPointeeType();
+  if (!PointeeTy->isAlwaysIncompleteType() && !PointeeTy->isFunctionType() &&
+      !PointeeTy->isSizelessType() &&
+      !PointeeTy->isStructureTypeWithFlexibleArrayMember())
+    return true;
+
+  QualType Unsp = Context.getBoundsSafetyPointerType(
+      QualType(PT, 0), BoundsSafetyPointerAttributes::unspecified());
+
+  auto PD = PDiag(diag::err_bounds_safety_counted_by_without_size);
+  PD << Unsp << Unsp->getPointeeType() << OrNull;
+
+  int SuggestFixIt = 0;
+  if (AttrLoc.isMacroID()) {
+    auto MacroName =
+        Lexer::getImmediateMacroName(AttrLoc, SourceMgr, LangOpts);
+    if (MacroName == "__counted_by") {
+      SuggestFixIt = 1;
+      auto MacroLoc = SourceMgr.getExpansionLoc(AttrLoc);
+      PD << FixItHint::CreateReplacement(MacroLoc, "__sized_by");
+    } else if (MacroName == "__counted_by_or_null") {
+      SuggestFixIt = 1;
+      auto MacroLoc = SourceMgr.getExpansionLoc(AttrLoc);
+      PD << FixItHint::CreateReplacement(MacroLoc, "__sized_by_or_null");
+    }
+  }
+  PD << SuggestFixIt;
+  Diag(AttrLoc, PD);
+
+  CountInBytes = true;
+  return true;
+}
+
 static const RecordDecl *GetEnclosingNamedOrTopAnonRecord(const FieldDecl *FD,
                                                   // TO_UPSTREAM(BoundsSafety)
                                                           Sema &S) {

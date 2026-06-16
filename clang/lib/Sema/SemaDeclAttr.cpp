@@ -6586,48 +6586,8 @@ public:
         return false;
       }
       if (Level == 0) {
-        if (!CountInBytes) {
-          QualType PointeeTy = QualType(PT, 0)->getPointeeType();
-          if (PointeeTy->isAlwaysIncompleteType() ||
-              PointeeTy->isFunctionType() || PointeeTy->isSizelessType() ||
-              PointeeTy->isStructureTypeWithFlexibleArrayMember()) {
-            // Use unspecified pointer attributes for diagnostic purposes.
-            QualType Unsp = S.Context.getBoundsSafetyPointerType(
-                QualType(PT, 0), BoundsSafetyPointerAttributes::unspecified());
-
-            auto PD = S.PDiag(diag::err_bounds_safety_counted_by_without_size);
-            PD << Unsp << Unsp->getPointeeType() << OrNull;
-            // Suggest `__sized_by` if the `__counted_by` macro was used.
-            // We intentionally don't suggest a fixit if the attribute is used
-            // directly (i.e. without the macro) because it is not expected that
-            // users will use it.
-            int SuggestFixIt = 0; // Default don't suggest __sized_by
-            if (Loc.isMacroID()) {
-              // FIXME(dliew): Use `AL.MacroII` to get the name. Unfortunately
-              // `AL.MacroII` is not set so we can't simply check the macro name
-              // is what we expect. So instead we have the lexer tell us the
-              // contents of the token and check against that.
-              // rdar://100631458
-              auto MacroName =
-                  Lexer::getImmediateMacroName(Loc, S.SourceMgr, S.LangOpts);
-              if (MacroName == "__counted_by") {
-                SuggestFixIt = 1; // Emit text to suggest __sized_by
-                auto MacroLoc = S.SourceMgr.getExpansionLoc(Loc);
-                PD << FixItHint::CreateReplacement(MacroLoc, "__sized_by");
-              } else if (MacroName == "__counted_by_or_null") {
-                SuggestFixIt = 1; // Emit text to suggest __sized_by_or_null
-                auto MacroLoc = S.SourceMgr.getExpansionLoc(Loc);
-                PD << FixItHint::CreateReplacement(MacroLoc,
-                                                   "__sized_by_or_null");
-              }
-            }
-            PD << SuggestFixIt;
-            S.Diag(Loc, PD);
-
-            // Recover by assuming a byte count.
-            CountInBytes = true;
-          }
-        }
+        S.DiagnoseCountedByPointeeType(DeclTy, Loc, DiagName, CountInBytes,
+                                       OrNull);
         return true;
       }
       --Level;
