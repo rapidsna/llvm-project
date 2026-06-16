@@ -1299,7 +1299,7 @@ public:
 ///
 /// This is intended to be a small value object.
 struct DeclaratorChunk {
-  DeclaratorChunk() :
+  DeclaratorChunk()
       : LateAttrList(/*PSoon=*/true,
                      /*LateAttrParseExperimentalExtOnly=*/true, true) {};
 
