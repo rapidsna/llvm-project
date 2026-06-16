@@ -7222,7 +7222,7 @@ def err_count_attr_argument_not_integer : Error<
 def err_count_attr_only_support_simple_decl_reference : Error<
   "'%select{counted_by|sized_by|counted_by_or_null|sized_by_or_null}0' argument must be a simple declaration reference">;
 def err_count_attr_in_union : Error<
-  "'%select{counted_by|sized_by|counted_by_or_null|sized_by_or_null}0' cannot be applied to a union member">;
+  "'%select{counted_by|sized_by|counted_by_or_null|sized_by_or_null|ended_by}0' cannot be applied to a union member">;
 def err_count_attr_refer_to_union : Error<
   "'%select{counted_by|sized_by|counted_by_or_null|sized_by_or_null}0' argument cannot refer to a union member">;
 def note_flexible_array_counted_by_attr_field : Note<
