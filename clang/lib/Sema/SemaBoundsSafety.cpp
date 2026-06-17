@@ -55,37 +55,89 @@ Sema::getBoundsAttrFlags(AttributeCommonInfo::Kind K) {
   return Flags;
 }
 
-bool Sema::DiagnoseCountedByPointeeType(QualType PointerTy,
-                                        SourceLocation AttrLoc,
-                                        StringRef DiagName, bool &CountInBytes,
-                                        bool OrNull) {
-  const auto *PT = PointerTy->getAs<PointerType>();
-  if (!PT)
+bool Sema::ValidateBoundsAttrTypeShape(QualType Ty, SourceLocation AttrLoc,
+                                       SourceRange AttrRange,
+                                       BoundsAttrFlags &Flags) {
+  unsigned Kind = Flags.IsEndedBy
+                      ? BoundsAttributedType::EndedBy
+                      : getCountAttrKind(Flags.CountInBytes, Flags.OrNull);
+
+  // ended_by only applies to pointers, not arrays.
+  if (Flags.IsEndedBy) {
+    if (!Ty->isPointerType()) {
+      Diag(AttrLoc, diag::err_count_attr_not_on_ptr_or_flexible_array_member)
+          << Kind << 0;
+      return false;
+    }
     return true;
+  }
 
-  if (CountInBytes)
-    return true;
+  // counted_by/sized_by: must be pointer or array.
+  if (!Ty->isPointerType() && !Ty->isArrayType()) {
+    Diag(AttrLoc, diag::err_count_attr_not_on_ptr_or_flexible_array_member)
+        << Kind << 0;
+    return false;
+  }
 
-  QualType PointeeTy = PT->getPointeeType();
+  // Arrays with sized_by or _or_null variants are not allowed.
+  if (Ty->isArrayType() && (Flags.CountInBytes || Flags.OrNull)) {
+    Diag(AttrLoc, diag::err_count_attr_not_on_ptr_or_flexible_array_member)
+        << Kind << /*suggest counted_by*/ 1;
+    return false;
+  }
 
-  unsigned InvalidTypeKind;
-  if (PointeeTy->isAlwaysIncompleteType())
-    InvalidTypeKind = 0; // INCOMPLETE
-  else if (PointeeTy->isSizelessType())
-    InvalidTypeKind = 1; // SIZELESS
-  else if (PointeeTy->isFunctionType())
-    InvalidTypeKind = 2; // FUNCTION
-  else if (PointeeTy->isStructureTypeWithFlexibleArrayMember())
-    InvalidTypeKind = 3; // FLEXIBLE_ARRAY_MEMBER
-  else
-    return true;
+  // Pointee/element type validation.
+  {
+    QualType PointeeTy;
+    int SelectPtrOrArr;
+    if (Ty->isPointerType()) {
+      PointeeTy = Ty->getPointeeType();
+      SelectPtrOrArr = 0;
+    } else {
+      const ArrayType *AT = getASTContext().getAsArrayType(Ty);
+      PointeeTy = AT->getElementType();
+      SelectPtrOrArr = 1;
+    }
 
-  unsigned Kind = OrNull ? BoundsAttributedType::CountedByOrNull
-                         : BoundsAttributedType::CountedBy;
-  Diag(AttrLoc, diag::err_counted_by_attr_pointee_unknown_size)
-      << /*pointer*/ 0 << PointeeTy << InvalidTypeKind << /*cannot*/ 0 << Kind;
+    int InvalidTypeKind = -1;
+    bool ShouldWarn = false;
+    if (PointeeTy->isAlwaysIncompleteType() && !Flags.CountInBytes) {
+      if (PointeeTy->isVoidType() &&
+          !getLangOpts().hasBoundsSafetyAttributes()) {
+        Diag(AttrLoc, diag::ext_gnu_counted_by_void_ptr) << Kind;
+        Diag(AttrLoc, diag::note_gnu_counted_by_void_ptr_use_sized_by) << Kind;
+        Flags.CountInBytes = true;
+        return true;
+      }
+      InvalidTypeKind = 0; // INCOMPLETE
+    } else if (PointeeTy->isSizelessType()) {
+      InvalidTypeKind = 1; // SIZELESS
+    } else if (PointeeTy->isFunctionType()) {
+      InvalidTypeKind = 2; // FUNCTION
+    } else if (PointeeTy->isStructureTypeWithFlexibleArrayMember()) {
+      if (Ty->isArrayType() && !getLangOpts().BoundsSafety)
+        ShouldWarn = true;
+      InvalidTypeKind = 3; // FLEXIBLE_ARRAY_MEMBER
+    }
 
-  CountInBytes = true;
+    if (InvalidTypeKind >= 0) {
+      unsigned DiagID = ShouldWarn
+                            ? diag::warn_counted_by_attr_elt_type_unknown_size
+                            : diag::err_counted_by_attr_pointee_unknown_size;
+      Diag(AttrLoc, DiagID) << SelectPtrOrArr << PointeeTy << InvalidTypeKind
+                            << (ShouldWarn ? 1 : 0) << Kind << AttrRange;
+      if (ShouldWarn)
+        return true;
+      // Under BoundsSafety, recover by switching to byte count so that
+      // type construction can proceed and emit follow-up diagnostics.
+      if (getLangOpts().hasBoundsSafetyAttributes()) {
+        Flags.CountInBytes = true;
+        return true;
+      }
+      return false;
+    }
+  }
+
   return true;
 }
 
@@ -170,6 +222,16 @@ bool Sema::CheckCountedByAttrOnFieldDecl(FieldDecl *FD, Expr *E,
   }
 
   const QualType FieldTy = FD->getType();
+
+  // Type shape validation (shared with BoundsSafety path).
+  BoundsAttrFlags Flags;
+  Flags.CountInBytes = CountInBytes;
+  Flags.OrNull = OrNull;
+  if (!ValidateBoundsAttrTypeShape(FieldTy, FD->getBeginLoc(),
+                                   FD->getSourceRange(), Flags))
+    return true;
+
+  // FAM check — needs Decl context (isFlexibleArrayMemberLike).
   LangOptions::StrictFlexArraysLevelKind StrictFlexArraysLevel =
       LangOptions::StrictFlexArraysLevelKind::IncompleteOnly;
   if (FieldTy->isArrayType() &&
@@ -181,7 +243,6 @@ bool Sema::CheckCountedByAttrOnFieldDecl(FieldDecl *FD, Expr *E,
     return true;
   }
 
-  // Validate the expression type
   if (!E->getType()->isIntegerType() || E->getType()->isBooleanType()) {
     Diag(E->getBeginLoc(), diag::err_count_attr_argument_not_integer)
         << Kind << E->getSourceRange();
