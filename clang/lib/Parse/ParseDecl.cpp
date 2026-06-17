@@ -6922,10 +6922,14 @@ void Parser::ParseDeclaratorInternal(Declarator &D,
                          ? AR_GNUAttributesParsed
                          : AR_GNUAttributesParsedAndRejected);
 
-    // Late-parsed type attributes apply only to members and function
-    // parameters, not variables.
+    // Late-parsed type attributes apply to members, function parameters,
+    // and file-scope declarations (for function return types where the
+    // count expression may reference parameters not yet in scope).
+    // For non-function file-scope decls, DistributeCLateParsedAttrs resolves
+    // the cached tokens immediately.
     bool LateParsingContext = D.getContext() == DeclaratorContext::Member ||
-                              D.getContext() == DeclaratorContext::Prototype;
+                              D.getContext() == DeclaratorContext::Prototype ||
+                              D.getContext() == DeclaratorContext::File;
 
     // No guard on ExperimentalLateParseAttributes is needed here;
     // DS.getLateAttributes() already initializes with
@@ -6941,6 +6945,18 @@ void Parser::ParseDeclaratorInternal(Declarator &D,
     Actions.runWithSufficientStackSpace(
         D.getBeginLoc(), [&] { ParseDeclaratorInternal(D, DirectDeclParser); });
     if (Kind == tok::star) {
+      // For non-function, non-prototype file-scope decls (globals), resolve
+      // cached late-parsed attrs immediately — the count expression is already
+      // in scope. For function return types and parameters, leave them cached
+      // for ProcessLateParsedTypeAttributesForParameters.
+      if (D.getContext() == DeclaratorContext::File &&
+          !D.isFunctionDeclarator() && !DS.getLateAttributes().empty()) {
+        for (auto *LA : DS.getLateAttributes()) {
+          if (auto *LTA = dyn_cast<LateParsedTypeAttribute>(LA))
+            LTA->ParseInto(DS.getAttributes());
+        }
+        DS.getLateAttributes().clear();
+      }
       // Remember that we parsed a pointer type, and remember the type-quals.
       D.AddTypeInfo(DeclaratorChunk::getPointer(
                         DS.getTypeQualifiers(), Loc, DS.getConstSpecLoc(),

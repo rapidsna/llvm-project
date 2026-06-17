@@ -21195,6 +21195,27 @@ struct RebuildTypeWithLateParsedAttr
       TLB.push<DynamicRangePointerTypeLoc>(T);
     else
       TLB.push<CountAttributedTypeLoc>(T);
+
+    // Apply __single for BoundsSafety mode. Desugar, apply __single to
+    // the inner pointer, re-wrap, and update TLB. The TypeLoc layout is
+    // unchanged (PointerTypeLoc size is the same with or without __single),
+    // so TypeWasModifiedSafely is correct.
+    if (SemaRef.getLangOpts().BoundsSafetyAttributes &&
+        !SemaRef.getLangOpts().isBoundsSafetyAttributeOnlyMode()) {
+      if (auto *CAT = T->getAs<CountAttributedType>()) {
+        QualType Inner = CAT->desugar();
+        if (Inner->isPointerType() && !Inner->isSinglePointerType()) {
+          QualType SingleInner =
+              SemaRef.getASTContext().getBoundsSafetyPointerType(
+                  Inner, BoundsSafetyPointerAttributes::single());
+          T = SemaRef.getASTContext().getCountAttributedType(
+              SingleInner, CAT->getCountExpr(), CAT->isCountInBytes(),
+              CAT->isOrNull(), CAT->getCoupledDecls());
+          TLB.TypeWasModifiedSafely(T);
+        }
+      }
+    }
+
     return T;
   }
 
