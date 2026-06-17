@@ -6597,7 +6597,12 @@ public:
     }
 
     // Fallback for pointers_only.
-    S.Diag(Loc, diag::err_attribute_pointers_only) << DiagName << 0;
+    unsigned DiagKind = CountInBytes ? (OrNull ? BoundsAttributedType::SizedByOrNull
+                                               : BoundsAttributedType::SizedBy)
+                                     : (OrNull ? BoundsAttributedType::CountedByOrNull
+                                               : BoundsAttributedType::CountedBy);
+    S.Diag(Loc, diag::err_count_attr_not_on_ptr_or_flexible_array_member)
+        << DiagKind << 0;
     return false;
   }
 
@@ -6707,7 +6712,8 @@ public:
     }
 
     // Fallback for pointers_only.
-    S.Diag(Loc, diag::err_attribute_pointers_only) << DiagName << 0;
+    S.Diag(Loc, diag::err_count_attr_not_on_ptr_or_flexible_array_member)
+        << BoundsAttributedType::EndedBy << 0;
     return false;
   }
 };
@@ -7850,7 +7856,8 @@ void Sema::applyPtrCountedByEndedByAttr(Decl *D, unsigned Level,
     QualType TSITy = PVD->getTypeSourceInfo()->getType();
     if (IsEndedBy) {
       if (Level == 0 && TSITy->isArrayType()) {
-        Diag(Loc, diag::err_attribute_pointers_only) << DiagName << 0;
+        Diag(Loc, diag::err_count_attr_not_on_ptr_or_flexible_array_member)
+            << BoundsAttributedType::EndedBy << 0;
         return;
       }
     } else {
