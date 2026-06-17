@@ -67,33 +67,23 @@ bool Sema::DiagnoseCountedByPointeeType(QualType PointerTy,
     return true;
 
   QualType PointeeTy = PT->getPointeeType();
-  if (!PointeeTy->isAlwaysIncompleteType() && !PointeeTy->isFunctionType() &&
-      !PointeeTy->isSizelessType() &&
-      !PointeeTy->isStructureTypeWithFlexibleArrayMember())
+
+  unsigned InvalidTypeKind;
+  if (PointeeTy->isAlwaysIncompleteType())
+    InvalidTypeKind = 0; // INCOMPLETE
+  else if (PointeeTy->isSizelessType())
+    InvalidTypeKind = 1; // SIZELESS
+  else if (PointeeTy->isFunctionType())
+    InvalidTypeKind = 2; // FUNCTION
+  else if (PointeeTy->isStructureTypeWithFlexibleArrayMember())
+    InvalidTypeKind = 3; // FLEXIBLE_ARRAY_MEMBER
+  else
     return true;
 
-  QualType Unsp = Context.getBoundsSafetyPointerType(
-      QualType(PT, 0), BoundsSafetyPointerAttributes::unspecified());
-
-  auto PD = PDiag(diag::err_bounds_safety_counted_by_without_size);
-  PD << Unsp << Unsp->getPointeeType() << OrNull;
-
-  int SuggestFixIt = 0;
-  if (AttrLoc.isMacroID()) {
-    auto MacroName =
-        Lexer::getImmediateMacroName(AttrLoc, SourceMgr, LangOpts);
-    if (MacroName == "__counted_by") {
-      SuggestFixIt = 1;
-      auto MacroLoc = SourceMgr.getExpansionLoc(AttrLoc);
-      PD << FixItHint::CreateReplacement(MacroLoc, "__sized_by");
-    } else if (MacroName == "__counted_by_or_null") {
-      SuggestFixIt = 1;
-      auto MacroLoc = SourceMgr.getExpansionLoc(AttrLoc);
-      PD << FixItHint::CreateReplacement(MacroLoc, "__sized_by_or_null");
-    }
-  }
-  PD << SuggestFixIt;
-  Diag(AttrLoc, PD);
+  unsigned Kind = OrNull ? BoundsAttributedType::CountedByOrNull
+                         : BoundsAttributedType::CountedBy;
+  Diag(AttrLoc, diag::err_counted_by_attr_pointee_unknown_size)
+      << /*pointer*/ 0 << PointeeTy << InvalidTypeKind << /*cannot*/ 0 << Kind;
 
   CountInBytes = true;
   return true;
