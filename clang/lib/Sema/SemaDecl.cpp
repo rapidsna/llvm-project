@@ -21131,6 +21131,11 @@ struct RebuildTypeWithLateParsedAttr
                                 Sema::ParseLateParsedTypeAttributeCB *ParseCB)
       : TreeTransform(SemaRef), VD(VD), ParseCallback(ParseCB) {}
 
+  Decl *getTransformedDecl(Decl *Old) const {
+    auto It = TransformedLocalDecls.find(Old);
+    return It != TransformedLocalDecls.end() ? It->second : nullptr;
+  }
+
   // TODO: Move this diagnostics outside this. That will help remove
   // custom many Transform*Type, like TransformDependentSizedArrayType.
 
@@ -21430,16 +21435,9 @@ void Sema::ProcessLateParsedTypeAttributesForParameters(
   for (auto *PD : FD->parameters())
     ActOnReenterCXXMethodParameter(getCurScope(), PD);
 
-  for (auto *PD : FD->parameters()) {
-    RebuildTypeWithLateParsedAttr RebuildParamType(*this, PD, ParseCB);
-    auto *OldTSI = PD->getTypeSourceInfo();
-    auto *TSI = RebuildParamType.TransformType(PD->getTypeSourceInfo());
-    if (TSI && TSI != OldTSI) {
-      PD->setTypeSourceInfo(TSI);
-      PD->setType(TSI->getType());
-    }
-  }
-
+  // TreeTransform the function type. This walks into parameter types,
+  // resolving LateParsedAttrType placeholders via TransformLateParsedAttrType,
+  // and creates new ParmVarDecls with the resolved types.
   RebuildTypeWithLateParsedAttr RebuildProto(*this, FD, ParseCB);
 
   auto *OldTSI = FD->getTypeSourceInfo();
@@ -21448,16 +21446,17 @@ void Sema::ProcessLateParsedTypeAttributesForParameters(
   if (TSI && TSI != OldTSI) {
     FD->setTypeSourceInfo(TSI);
     FD->setType(TSI->getType());
+
+    // Sync existing ParmVarDecl types from the rebuilt function type.
+    if (auto *FPT = TSI->getType()->getAs<FunctionProtoType>()) {
+      for (unsigned I = 0; I < FD->getNumParams(); ++I) {
+        FD->getParamDecl(I)->setType(FPT->getParamType(I));
+      }
+    }
   }
 
   ActOnPopScope(SourceLocation(), &ProtoScope);
   CurScope = ProtoScope.getParent();
-  // TODO: Should we update FD->getType()?
-  // TODO: check counted_by?
-  // if (auto *CAT = FD->getType()->getAs<CountAttributedType>()) {
-  //   CheckCountedByAttrOnFieldDecl(FD, CAT->getCountExpr(),
-  //                                 CAT->isCountInBytes(), CAT->isOrNull());
-  // }
 }
 
 void Sema::ActOnFields(Scope *S, SourceLocation RecLoc, Decl *EnclosingDecl,
