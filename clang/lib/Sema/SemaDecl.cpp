@@ -21450,7 +21450,19 @@ void Sema::ProcessLateParsedTypeAttributesForParameters(
     // Sync existing ParmVarDecl types from the rebuilt function type.
     if (auto *FPT = TSI->getType()->getAs<FunctionProtoType>()) {
       for (unsigned I = 0; I < FD->getNumParams(); ++I) {
-        FD->getParamDecl(I)->setType(FPT->getParamType(I));
+        QualType ParamTy = FPT->getParamType(I);
+        // Apply __single pointer attribute for BoundsSafety mode.
+        // BuildCountAttributedArrayOrPointerType doesn't add it to keep
+        // the type shape simple for TreeTransform; we add it here instead.
+        if (getLangOpts().hasBoundsSafetyAttributes() &&
+            !getLangOpts().isBoundsSafetyAttributeOnlyMode() &&
+            ParamTy->isPointerType() &&
+            ParamTy->getAs<CountAttributedType>() &&
+            !ParamTy->isSinglePointerType()) {
+          ParamTy = Context.getBoundsSafetyPointerType(
+              ParamTy, BoundsSafetyPointerAttributes::single());
+        }
+        FD->getParamDecl(I)->setType(ParamTy);
       }
     }
   }

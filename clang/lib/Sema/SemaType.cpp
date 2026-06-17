@@ -11750,20 +11750,29 @@ QualType Sema::BuildCountAttributedArrayOrPointerType(QualType WrappedTy,
                                                       Expr *CountExpr,
                                                       bool CountInBytes,
                                                       bool OrNull) {
-  /* TO_UPSTREAM(BoundsSafety) ON */
-  if (getLangOpts().BoundsSafetyAttributes) {
-    BuildCountAttributedType(WrappedTy, CountExpr, CountInBytes, OrNull);
-  }
-  /* TO_UPSTREAM(BoundsSafety) OFF */
-
   // Accept any array or pointer type here. For arrays, validation that it's
   // a flexible array member is deferred until CheckCountedByAttrOnFieldDecl.
   assert(WrappedTy->isArrayType() || WrappedTy->isPointerType());
 
   llvm::SmallVector<TypeCoupledDeclRefInfo, 1> Decls;
-  BuildTypeCoupledDecls(CountExpr, Decls);
-  /// When the resulting expression is invalid, we still create the AST using
-  /// the original count expression for the sake of AST dump.
+  /* TO_UPSTREAM(BoundsSafety) ON */
+  if (getLangOpts().BoundsSafetyAttributes) {
+    ExprResult R =
+        CountArgChecker(*this, Decls, CountInBytes, OrNull, /*ScopeCheck=*/false,
+                        WrappedTy->isArrayType())
+            .TransformExpr(CountExpr);
+    if (!R.isInvalid())
+      CountExpr = R.get();
+    R = DefaultLvalueConversion(CountExpr);
+    if (!R.isInvalid())
+      CountExpr = R.get();
+  } else {
+    /* TO_UPSTREAM(BoundsSafety) OFF */
+    BuildTypeCoupledDecls(CountExpr, Decls);
+    /* TO_UPSTREAM(BoundsSafety) ON */
+  }
+  /* TO_UPSTREAM(BoundsSafety) OFF */
+
   return Context.getCountAttributedType(WrappedTy, CountExpr, CountInBytes,
                                         OrNull, Decls);
 }
