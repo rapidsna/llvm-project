@@ -6715,10 +6715,10 @@ public:
                                                   AllowRedecl);
     }
 
-    // Fallback for pointers_only.
-    S.Diag(Loc, diag::err_count_attr_not_on_ptr_or_flexible_array_member)
-        << BoundsAttributedType::EndedBy << 0;
-    return false;
+    // Fallback: validate type shape (pointer-only for ended_by).
+    Sema::BoundsAttrFlags Flags;
+    Flags.IsEndedBy = true;
+    return S.ValidateBoundsAttrTypeShape(DeclTy, Loc, SourceRange(Loc), Flags);
   }
 };
 
