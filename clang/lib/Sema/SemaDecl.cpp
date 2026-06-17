@@ -21103,42 +21103,24 @@ bool Sema::EntirelyFunctionPointers(const RecordDecl *Record) {
 }
 
 // TODO: Allow other Decl types and rename it
-static QualType handleCountedByAttrField(Sema &S, QualType T, Decl *D,
-                                         const ParsedAttr &AL) {
+static QualType BuildBoundsAttrType(Sema &S, QualType T, Decl *D,
+                                    const ParsedAttr &AL) {
   if (!AL.diagnoseLangOpts(S))
     return QualType();
 
-  // assert(isa<FieldDecl>(D));
-
-  auto *CountExpr = AL.getArgAsExpr(0);
-  if (!CountExpr)
+  auto *AttrArg = AL.getArgAsExpr(0);
+  if (!AttrArg)
     return QualType();
 
-  bool CountInBytes;
-  bool OrNull;
-  switch (AL.getKind()) {
-  case ParsedAttr::AT_CountedBy:
-    CountInBytes = false;
-    OrNull = false;
-    break;
-  case ParsedAttr::AT_CountedByOrNull:
-    CountInBytes = false;
-    OrNull = true;
-    break;
-  case ParsedAttr::AT_SizedBy:
-    CountInBytes = true;
-    OrNull = false;
-    break;
-  case ParsedAttr::AT_SizedByOrNull:
-    CountInBytes = true;
-    OrNull = true;
-    break;
-  default:
-    llvm_unreachable("unexpected counted_by family attribute");
-  }
+  auto Flags = Sema::getBoundsAttrFlags(AL.getKind());
 
-  return S.BuildCountAttributedArrayOrPointerType(T, CountExpr, CountInBytes,
-                                                  OrNull);
+  if (Flags.IsEndedBy)
+    return S.BuildDynamicRangePointerType(T, /*StartPtr=*/nullptr, AttrArg,
+                                          /*ScopeCheck=*/false);
+
+  return S.BuildCountAttributedArrayOrPointerType(T, AttrArg,
+                                                  Flags.CountInBytes,
+                                                  Flags.OrNull);
 }
 struct RebuildTypeWithLateParsedAttr
     : TreeTransform<RebuildTypeWithLateParsedAttr> {
@@ -21194,7 +21176,7 @@ struct RebuildTypeWithLateParsedAttr
       return QualType();
     }
 
-    QualType T = handleCountedByAttrField(SemaRef, InnerType, VD, AL);
+    QualType T = BuildBoundsAttrType(SemaRef, InnerType, VD, AL);
 
     if (T.isNull()) {
       AL.setInvalid();
@@ -21204,7 +21186,10 @@ struct RebuildTypeWithLateParsedAttr
 
     AL.setUsedAsTypeAttr();
 
-    TLB.push<CountAttributedTypeLoc>(T);
+    if (T->getAs<DynamicRangePointerType>())
+      TLB.push<DynamicRangePointerTypeLoc>(T);
+    else
+      TLB.push<CountAttributedTypeLoc>(T);
     return T;
   }
 
