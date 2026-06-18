@@ -21116,11 +21116,12 @@ static QualType BuildBoundsAttrType(Sema &S, QualType T, Decl *D,
 
   if (Flags.IsEndedBy)
     return S.BuildDynamicRangePointerType(T, /*StartPtr=*/nullptr, AttrArg,
-                                          /*ScopeCheck=*/false);
+                                          /*ScopeCheck=*/false,
+                                          /*SkipSingleAttr=*/true);
 
-  return S.BuildCountAttributedArrayOrPointerType(T, AttrArg,
-                                                  Flags.CountInBytes,
-                                                  Flags.OrNull);
+  return S.BuildCountAttributedType(T, AttrArg, Flags.CountInBytes,
+                                    Flags.OrNull, /*ScopeCheck=*/false,
+                                    /*SkipSingleAttr=*/true);
 }
 struct RebuildTypeWithLateParsedAttr
     : TreeTransform<RebuildTypeWithLateParsedAttr> {
@@ -21430,16 +21431,41 @@ void Sema::ProcessLateParsedTypeAttributesForFields(
     auto *OldTSI = FD->getTypeSourceInfo();
     auto *TSI = RebuildFieldType.TransformType(FD->getTypeSourceInfo());
     if (TSI && TSI != OldTSI) {
+      QualType NewTy = TSI->getType();
+      // Apply __single to pointers with bounds attributes.
+      if (getLangOpts().BoundsSafetyAttributes &&
+          !getLangOpts().isBoundsSafetyAttributeOnlyMode()) {
+        if (auto *BAT = NewTy->getAs<BoundsAttributedType>()) {
+          QualType Inner = BAT->desugar();
+          if (Inner->isPointerType() && !Inner->isSinglePointerType()) {
+            QualType SingleInner = Context.getBoundsSafetyPointerType(
+                Inner, BoundsSafetyPointerAttributes::single());
+            if (auto *CAT = dyn_cast<CountAttributedType>(BAT))
+              NewTy = Context.getCountAttributedType(
+                  SingleInner, CAT->getCountExpr(), CAT->isCountInBytes(),
+                  CAT->isOrNull(), CAT->getCoupledDecls());
+            else if (auto *DRPT = dyn_cast<DynamicRangePointerType>(BAT))
+              NewTy = Context.getDynamicRangePointerType(
+                  SingleInner, DRPT->getStartPointer(), DRPT->getEndPointer(),
+                  DRPT->getStartPtrDecls(), DRPT->getEndPtrDecls());
+          }
+        }
+      }
       FD->setTypeSourceInfo(TSI);
-      FD->setType(TSI->getType());
+      FD->setType(NewTy);
       if (IFD) {
-        IFD->setType(TSI->getType());
+        IFD->setType(NewTy);
       }
     }
 
     if (auto *CAT = FD->getType()->getAs<CountAttributedType>()) {
+      AttachDependerDeclsAttr(FD, CAT, /*Level=*/0);
       CheckCountedByAttrOnFieldDecl(FD, CAT->getCountExpr(),
                                     CAT->isCountInBytes(), CAT->isOrNull());
+    }
+    // For ended_by: mark end-pointer fields with started_by(this_field).
+    if (auto *DRPT = FD->getType()->getAs<DynamicRangePointerType>()) {
+      AttachStartedByToEndPointers(FD, DRPT);
     }
   }
 }

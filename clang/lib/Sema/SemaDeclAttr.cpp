@@ -7353,6 +7353,24 @@ void Sema::AttachDependerDeclsAttr(
   }
 }
 
+void Sema::AttachStartedByToEndPointers(ValueDecl *StartField,
+                                        const DynamicRangePointerType *DRPT) {
+  TypeCoupledDeclRefInfo StartPtrInfo(StartField, /*Deref=*/false);
+  for (auto EndPtrInfo : DRPT->endptr_decls()) {
+    ValueDecl *EndPtrDecl = EndPtrInfo.getDecl();
+    unsigned EndPtrLevel = EndPtrInfo.isDeref() ? 1 : 0;
+    QualType Ty = EndPtrDecl->getType();
+    if (!getLangOpts().isBoundsSafetyAttributeOnlyMode() &&
+        !Ty->isSinglePointerType()) {
+      Ty = Context.getBoundsSafetyPointerType(
+          Ty, BoundsSafetyPointerAttributes::single());
+    }
+    MakeStartedByPointerType TT(*this, EndPtrLevel, StartPtrInfo);
+    QualType NewTy = TT.TransformType(Ty);
+    EndPtrDecl->setType(NewTy);
+  }
+}
+
 // LifetimeCheck on local variable implies ScopeCheck.
 LLVM_ATTRIBUTE_UNUSED inline bool
 shouldImplyScopeCheck(Sema::LifetimeCheckKind Kind) {

@@ -10170,24 +10170,38 @@ static void HandleCountedByAttrOnType(TypeProcessingState &State,
     pointerNestLevel = getPointerNestLevel(State, chunkIndex);
   }
 
-  bool CountInBytes, OrNull;
-  if (!validateCountedByAttrType(S, CurType, Attr.getKind(), Attr.getLoc(),
-                                 pointerNestLevel, CountInBytes, OrNull)) {
-    Attr.setInvalid();
-    return;
+  /* TO_UPSTREAM(BoundsSafety) ON */
+  if (S.getLangOpts().BoundsSafetyAttributes) {
+    auto Flags = Sema::getBoundsAttrFlags(Attr.getKind());
+    if (!S.ValidateBoundsAttrTypeShape(CurType, Attr.getLoc(),
+                                       Attr.getRange(), Flags)) {
+      Attr.setInvalid();
+      return;
+    }
+    CurType = S.BuildCountAttributedType(CurType, CountExpr, Flags.CountInBytes,
+                                         Flags.OrNull);
+  } else {
+    /* TO_UPSTREAM(BoundsSafety) OFF */
+    bool CountInBytes, OrNull;
+    if (!validateCountedByAttrType(S, CurType, Attr.getKind(), Attr.getLoc(),
+                                   pointerNestLevel, CountInBytes, OrNull)) {
+      Attr.setInvalid();
+      return;
+    }
+    CurType = S.BuildCountAttributedArrayOrPointerType(CurType, CountExpr,
+                                                       CountInBytes, OrNull);
+    /* TO_UPSTREAM(BoundsSafety) ON */
   }
-
-  CurType = S.BuildCountAttributedArrayOrPointerType(CurType, CountExpr,
-                                                     CountInBytes, OrNull);
+  /* TO_UPSTREAM(BoundsSafety) OFF */
 }
 
 bool Sema::ActOnLateParsedTypeAttr(ParsedAttr::Kind AttrKind,
                                    SourceLocation AttrNameLoc, QualType &type,
                                    unsigned pointerNestLevel,
                                    LateParsedTypeAttribute *LTA) {
-  bool CountInBytes, OrNull;
-  if (!validateCountedByAttrType(*this, type, AttrKind, AttrNameLoc,
-                                 pointerNestLevel, CountInBytes, OrNull))
+  auto Flags = getBoundsAttrFlags(AttrKind);
+  if (!ValidateBoundsAttrTypeShape(type, AttrNameLoc, SourceRange(AttrNameLoc),
+                                   Flags))
     return false;
   type = getASTContext().getLateParsedAttrType(type, LTA);
   return true;
@@ -11617,7 +11631,8 @@ public:
 
 QualType Sema::BuildCountAttributedType(QualType PointerTy, Expr *CountExpr,
                                         bool CountInBytes, bool OrNull,
-                                        bool ScopeCheck) {
+                                        bool ScopeCheck,
+                                        bool SkipSingleAttr) {
 
   llvm::SmallVector<TypeCoupledDeclRefInfo, 1> Decls;
   ExprResult R = CountArgChecker(*this, Decls, CountInBytes, OrNull, ScopeCheck,
@@ -11631,7 +11646,8 @@ QualType Sema::BuildCountAttributedType(QualType PointerTy, Expr *CountExpr,
   if (!R.isInvalid())
     CountExpr = R.get();
 
-  if (!getLangOpts().isBoundsSafetyAttributeOnlyMode() &&
+  if (!SkipSingleAttr &&
+      !getLangOpts().isBoundsSafetyAttributeOnlyMode() &&
       !PointerTy->isSinglePointerType()) {
     PointerTy = Context.getBoundsSafetyPointerType(
         PointerTy, BoundsSafetyPointerAttributes::single());
@@ -11672,7 +11688,8 @@ QualType DropAutoNullTerminated(ASTContext &Ctx, QualType T) {
 } // namespace
 
 QualType Sema::BuildDynamicRangePointerType(QualType PointerTy, Expr *StartPtr,
-                                            Expr *EndPtr, bool ScopeCheck) {
+                                            Expr *EndPtr, bool ScopeCheck,
+                                            bool SkipSingleAttr) {
   std::optional<TypeCoupledDeclRefInfo> StartDecl, EndDecl;
 
   if (StartPtr) {
@@ -11693,7 +11710,8 @@ QualType Sema::BuildDynamicRangePointerType(QualType PointerTy, Expr *StartPtr,
     EndDecl = RAC.getDependeeInfo();
   }
 
-  if (!getLangOpts().isBoundsSafetyAttributeOnlyMode() &&
+  if (!SkipSingleAttr &&
+      !getLangOpts().isBoundsSafetyAttributeOnlyMode() &&
       !PointerTy->isSinglePointerType()) {
     PointerTy = Context.getBoundsSafetyPointerType(
         PointerTy, BoundsSafetyPointerAttributes::single());
@@ -11755,24 +11773,7 @@ QualType Sema::BuildCountAttributedArrayOrPointerType(QualType WrappedTy,
   assert(WrappedTy->isArrayType() || WrappedTy->isPointerType());
 
   llvm::SmallVector<TypeCoupledDeclRefInfo, 1> Decls;
-  /* TO_UPSTREAM(BoundsSafety) ON */
-  if (getLangOpts().BoundsSafetyAttributes) {
-    ExprResult R =
-        CountArgChecker(*this, Decls, CountInBytes, OrNull, /*ScopeCheck=*/false,
-                        WrappedTy->isArrayType())
-            .TransformExpr(CountExpr);
-    if (!R.isInvalid())
-      CountExpr = R.get();
-    R = DefaultLvalueConversion(CountExpr);
-    if (!R.isInvalid())
-      CountExpr = R.get();
-  } else {
-    /* TO_UPSTREAM(BoundsSafety) OFF */
-    BuildTypeCoupledDecls(CountExpr, Decls);
-    /* TO_UPSTREAM(BoundsSafety) ON */
-  }
-  /* TO_UPSTREAM(BoundsSafety) OFF */
-
+  BuildTypeCoupledDecls(CountExpr, Decls);
   return Context.getCountAttributedType(WrappedTy, CountExpr, CountInBytes,
                                         OrNull, Decls);
 }

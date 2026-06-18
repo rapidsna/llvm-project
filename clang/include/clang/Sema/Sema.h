@@ -16209,13 +16209,20 @@ public:
                                const CountAttributedType *NewDependerCountTy,
                                unsigned Level);
 
+  /// For a field with __ended_by, mark the end-pointer field(s) with
+  /// started_by(this_field). This establishes the bidirectional relationship.
+  void AttachStartedByToEndPointers(ValueDecl *StartField,
+                                    const DynamicRangePointerType *DRPT);
+
   QualType BuildCountAttributedType(QualType PointerTy, Expr *CountExpr,
                                     bool CountInBytes = false,
                                     bool OrNull = false,
-                                    bool ScopeCheck = false);
+                                    bool ScopeCheck = false,
+                                    bool SkipSingleAttr = false);
 
   QualType BuildDynamicRangePointerType(QualType PointerTy, Expr *StartPtr,
-                                        Expr *EndPtr, bool ScopeCheck = false);
+                                        Expr *EndPtr, bool ScopeCheck = false,
+                                        bool SkipSingleAttr = false);
 
   /// Canonicalize a count expression the same way BuildCountAttributedType
   /// does, without constructing the type. Used for redecl comparison.
