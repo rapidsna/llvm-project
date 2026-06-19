@@ -21500,6 +21500,15 @@ void Sema::ProcessLateParsedTypeAttributesForParameters(
         }
         FD->getParamDecl(I)->setType(ParamTy);
       }
+
+      // For ended_by parameters: mark end-pointer parameters with
+      // started_by(this_param). Done as a second pass so all parameter
+      // types are stable before we cross-reference them.
+      for (unsigned I = 0; I < FD->getNumParams(); ++I) {
+        ParmVarDecl *PD = FD->getParamDecl(I);
+        if (auto *DRPT = PD->getType()->getAs<DynamicRangePointerType>())
+          AttachStartedByToEndPointers(PD, DRPT);
+      }
     }
   }
 
