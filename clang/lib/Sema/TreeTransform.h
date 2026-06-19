@@ -7856,8 +7856,12 @@ QualType TreeTransform<Derived>::TransformCountAttributedType(
       OldCount != NewCount) {
     /* TO_UPSTREAM(BoundsSafety) ON */
     if (SemaRef.getLangOpts().BoundsSafetyAttributes) {
+      // Skip applying __single during rebuild: it changes inner pointer
+      // identity and breaks the TypeLocBuilder identity invariant. Callers
+      // re-apply __single post-transform.
       Result = SemaRef.BuildCountAttributedType(
-          InnerTy, NewCount, OldTy->isCountInBytes(), OldTy->isOrNull());
+          InnerTy, NewCount, OldTy->isCountInBytes(), OldTy->isOrNull(),
+          /*ScopeCheck=*/false, /*SkipSingleAttr=*/true);
     } else {
       /* TO_UPSTREAM(BoundsSafety) OFF */
       // Currently, CountAttributedType can only wrap incomplete array types.
@@ -7912,8 +7916,9 @@ QualType TreeTransform<Derived>::TransformDynamicRangePointerType(
   QualType Result = TL.getType();
   if (getDerived().AlwaysRebuild() || PointerTy != OldTy->desugar() ||
       OldStartPtr != NewStartPtr || OldEndPtr != NewEndPtr) {
-    Result =
-        SemaRef.BuildDynamicRangePointerType(PointerTy, NewStartPtr, NewEndPtr);
+    Result = SemaRef.BuildDynamicRangePointerType(
+        PointerTy, NewStartPtr, NewEndPtr, /*ScopeCheck=*/false,
+        /*SkipSingleAttr=*/true);
     if (Result.isNull())
       return QualType();
   }

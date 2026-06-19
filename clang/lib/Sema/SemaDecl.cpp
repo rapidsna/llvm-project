@@ -21197,26 +21197,6 @@ struct RebuildTypeWithLateParsedAttr
     else
       TLB.push<CountAttributedTypeLoc>(T);
 
-    // Apply __single for BoundsSafety mode. Desugar, apply __single to
-    // the inner pointer, re-wrap, and update TLB. The TypeLoc layout is
-    // unchanged (PointerTypeLoc size is the same with or without __single),
-    // so TypeWasModifiedSafely is correct.
-    if (SemaRef.getLangOpts().BoundsSafetyAttributes &&
-        !SemaRef.getLangOpts().isBoundsSafetyAttributeOnlyMode()) {
-      if (auto *CAT = T->getAs<CountAttributedType>()) {
-        QualType Inner = CAT->desugar();
-        if (Inner->isPointerType() && !Inner->isSinglePointerType()) {
-          QualType SingleInner =
-              SemaRef.getASTContext().getBoundsSafetyPointerType(
-                  Inner, BoundsSafetyPointerAttributes::single());
-          T = SemaRef.getASTContext().getCountAttributedType(
-              SingleInner, CAT->getCountExpr(), CAT->isCountInBytes(),
-              CAT->isOrNull(), CAT->getCoupledDecls());
-          TLB.TypeWasModifiedSafely(T);
-        }
-      }
-    }
-
     return T;
   }
 
@@ -21498,16 +21478,25 @@ void Sema::ProcessLateParsedTypeAttributesForParameters(
     if (auto *FPT = TSI->getType()->getAs<FunctionProtoType>()) {
       for (unsigned I = 0; I < FD->getNumParams(); ++I) {
         QualType ParamTy = FPT->getParamType(I);
-        // Apply __single pointer attribute for BoundsSafety mode.
-        // BuildCountAttributedArrayOrPointerType doesn't add it to keep
-        // the type shape simple for TreeTransform; we add it here instead.
+        // Apply __single to pointers with bounds attributes.
         if (getLangOpts().hasBoundsSafetyAttributes() &&
-            !getLangOpts().isBoundsSafetyAttributeOnlyMode() &&
-            ParamTy->isPointerType() &&
-            ParamTy->getAs<CountAttributedType>() &&
-            !ParamTy->isSinglePointerType()) {
-          ParamTy = Context.getBoundsSafetyPointerType(
-              ParamTy, BoundsSafetyPointerAttributes::single());
+            !getLangOpts().isBoundsSafetyAttributeOnlyMode()) {
+          if (auto *BAT = ParamTy->getAs<BoundsAttributedType>()) {
+            QualType Inner = BAT->desugar();
+            if (Inner->isPointerType() && !Inner->isSinglePointerType()) {
+              QualType SingleInner = Context.getBoundsSafetyPointerType(
+                  Inner, BoundsSafetyPointerAttributes::single());
+              if (auto *CAT = dyn_cast<CountAttributedType>(BAT))
+                ParamTy = Context.getCountAttributedType(
+                    SingleInner, CAT->getCountExpr(), CAT->isCountInBytes(),
+                    CAT->isOrNull(), CAT->getCoupledDecls());
+              else if (auto *DRPT = dyn_cast<DynamicRangePointerType>(BAT))
+                ParamTy = Context.getDynamicRangePointerType(
+                    SingleInner, DRPT->getStartPointer(),
+                    DRPT->getEndPointer(), DRPT->getStartPtrDecls(),
+                    DRPT->getEndPtrDecls());
+            }
+          }
         }
         FD->getParamDecl(I)->setType(ParamTy);
       }
