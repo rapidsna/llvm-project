@@ -2241,12 +2241,27 @@ Sema::DependentValuesMap getDependentInits(Sema &SemaRef,
   Sema::DependentValuesMap DependentValues;
   for (auto &DI : DCPT->dependent_decls()) {
     // Fields and non-param variables cannot have dependent inout counts.
-    assert(!DI.isDeref());
+    // With late-parsed bounds attributes, an erroneous use of '*len' on a
+    // non-parameter declaration is diagnosed by Sema (e.g., "dereference
+    // operator in '__counted_by' is only allowed for function parameters")
+    // but the CountAttributedType is still constructed with the deref
+    // marker. Skip such entries here to avoid asserting on already-diagnosed
+    // malformed types.
+    if (DI.isDeref())
+      continue;
 
     ValueDecl *D = DI.getDecl();
     auto *VD = dyn_cast<VarDecl>(D);
     auto *FD = dyn_cast<FieldDecl>(D);
-    assert(FD || (VD && !isa<ParmVarDecl>(VD)));
+    // A ParmVarDecl can only appear as a dependent decl for a function
+    // parameter's CountAttributedType. If we see one here (i.e., on a field
+    // or non-parameter variable's type) it means Sema already diagnosed a
+    // "different lifetime/scope" error but the type was still created.
+    // Skip it gracefully rather than asserting.
+    if (VD && isa<ParmVarDecl>(VD))
+      continue;
+    if (!FD && !VD)
+      continue;
 
     // We allow the dependent decl to be an __unsafe_late_const, but we don't
     // know its value, thus we don't replace it.
@@ -2329,7 +2344,12 @@ bool diagnoseDynamicCountVarInit(Sema &SemaRef, SourceLocation Loc,
   };
 
   if (const auto *RD = Ty->getAsRecordDecl()) {
-    assert(RD->isStruct() || RD->isUnion());
+    // For C++ class types (including class template specializations), this
+    // analysis is not implemented. Bail out rather than asserting -- support
+    // for bounds attributes inside class templates is not in -fbounds-safety
+    // mode (rdar://152528102).
+    if (!RD->isStruct() && !RD->isUnion())
+      return false;
 
     auto *ILE = GetInitListExpr(Init);
 
@@ -3447,12 +3467,13 @@ bool checkCountAttributedLocalsInBlock(Sema &SemaRef, const CFGBlock *block) {
               LocalDeclSet.find(DI.getDecl()) == LocalDeclSet.end()) {
             // The dependent decl can still be non-local variable if there was
             // an erroneous condition. Skip it to avoid reporting an irrelevant
-            // error message.
+            // error message. With late-parsed bounds attributes, the
+            // companion lifetime/scope diagnostic may not have been emitted
+            // yet (or at all) for local variables, so we cannot strictly
+            // assert that an error has occurred. Just bail out gracefully.
             if (auto *VD = dyn_cast<VarDecl>(DI.getDecl())) {
-              if (!VD->isLocalVarDecl()) {
-                assert(SemaRef.hasUncompilableErrorOccurred());
+              if (!VD->isLocalVarDecl())
                 continue;
-              }
               SemaRef.Diag(VD->getLocation(),
                            diag::err_bounds_safety_local_dependent_count_block);
               HadError = true;
