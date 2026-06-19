@@ -21512,6 +21512,22 @@ void Sema::ProcessLateParsedTypeAttributesForParameters(
                     DRPT->getEndPointer(), DRPT->getStartPtrDecls(),
                     DRPT->getEndPtrDecls());
             }
+          } else if (auto *VTT = ParamTy->getAs<ValueTerminatedType>()) {
+            // terminated_by/null_terminated wraps a pointer (or array). The
+            // TreeTransform rebuild reconstructs the inner pointer from the
+            // original TypeLoc, which has unspecified pointer attributes
+            // (the param Decl's QT was promoted to __single by
+            // deduceBoundsSafetyPointerTypes after parsing, but the TSI was
+            // not updated). Re-apply __single to the inner pointer here so
+            // builtins like __terminated_by_to_indexable see a __single
+            // pointer.
+            QualType Inner = VTT->desugar();
+            if (Inner->isPointerType() && !Inner->isSinglePointerType()) {
+              QualType SingleInner = Context.getBoundsSafetyPointerType(
+                  Inner, BoundsSafetyPointerAttributes::single());
+              ParamTy = Context.getValueTerminatedType(
+                  SingleInner, VTT->getTerminatorExpr());
+            }
           }
         }
         FD->getParamDecl(I)->setType(ParamTy);
