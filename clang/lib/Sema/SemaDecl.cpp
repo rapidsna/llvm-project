@@ -21398,6 +21398,11 @@ struct RebuildTypeWithLateParsedAttr
 
 void Sema::ProcessLateParsedTypeAttributesForFields(
     RecordDecl *EnclosingDecl, ParseLateParsedTypeAttributeCB *ParseCB) {
+  // Pass 1: resolve LateParsedAttrType placeholders on every field, applying
+  // __single re-wrap. We must finish all placeholder resolutions before any
+  // cross-field wiring (started_by, depender_decls), because attaching
+  // those modifies sibling fields' types -- a later iteration of pass 1
+  // would re-resolve from the original TSI and clobber the cross-references.
   for (auto *I : EnclosingDecl->decls()) {
     FieldDecl *FD = dyn_cast<FieldDecl>(I);
     IndirectFieldDecl *IFD = dyn_cast<IndirectFieldDecl>(I);
@@ -21437,6 +21442,17 @@ void Sema::ProcessLateParsedTypeAttributesForFields(
         IFD->setType(NewTy);
       }
     }
+  }
+
+  // Pass 2: cross-field wiring on now-stable types.
+  for (auto *I : EnclosingDecl->decls()) {
+    FieldDecl *FD = dyn_cast<FieldDecl>(I);
+    IndirectFieldDecl *IFD = dyn_cast<IndirectFieldDecl>(I);
+    if (!FD && IFD) {
+      FD = IFD->getAnonField();
+    }
+    if (!FD || FD->getType()->isRecordType())
+      continue;
 
     if (auto *CAT = FD->getType()->getAs<CountAttributedType>()) {
       AttachDependerDeclsAttr(FD, CAT, /*Level=*/0);
