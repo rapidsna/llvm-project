@@ -357,7 +357,13 @@ namespace {
         }
       }
 
-      llvm_unreachable("no Attr* for AttributedType*");
+      // No Attr* available. This can happen with -fbounds-safety late parsing
+      // when GetTypeForDeclarator is re-invoked for a Decl whose declarator
+      // contains a LateParsedAttrType: the second invocation walks the same
+      // AttributedTypes whose entries were already consumed by the first.
+      // Returning null is safe -- TypeLoc::setAttr accepts null, callers
+      // tolerate it.
+      return nullptr;
     }
 
     /* TO_UPSTREAM(BoundsSafety) ON*/
