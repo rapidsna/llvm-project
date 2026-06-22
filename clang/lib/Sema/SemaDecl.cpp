@@ -9090,8 +9090,16 @@ NamedDecl *Sema::ActOnVariableDeclarator(
   }
 
   /* TO_UPSTREAM(BoundsSafety) ON*/
-  if (getLangOpts().BoundsSafety)
+  if (getLangOpts().BoundsSafety) {
     deduceBoundsSafetyPointerTypes(NewVD);
+    // Attach DependerDeclsAttr to dependee local vars so the
+    // DynamicCountPointerAssignmentAnalysis can recognize them as count
+    // vars. On the non-late path this is done via applyPtrCountedByEndedByAttr;
+    // on the T10 late-parsing path that helper no longer runs for local
+    // VarDecls, so we wire it up here.
+    if (const auto *CATy = NewVD->getType()->getAs<CountAttributedType>())
+      AttachDependerDeclsAttr(NewVD, CATy, /*Level=*/0);
+  }
   /* TO_UPSTREAM(BoundsSafety) OFF*/
 
   // WebAssembly tables are always in address space 1 (wasm_var). Don't apply
@@ -21140,7 +21148,14 @@ struct RebuildTypeWithLateParsedAttr
   // TODO: Move this diagnostics outside this. That will help remove
   // custom many Transform*Type, like TransformDependentSizedArrayType.
 
-  // Helper to check and diagnose if a type is CountAttributedType
+  // Helper to check and diagnose if a type is CountAttributedType.
+  // TODO: This currently emits the generic "not allowed" diagnostic for all
+  // contexts. For function parameters where the outer pointer is *not*
+  // bounds-attributed (the "indirect parameter" pattern, which is valid),
+  // this is a false positive vs the non-late path which suppresses the
+  // diagnostic. Fixing it requires tracking whether the outer pointer has a
+  // bounds-attr from within TransformPointerType. See known follow-up
+  // issues in Late Parsing Refactoring Progress wiki.
   bool diagnoseCountAttributedType(QualType Ty, SourceLocation Loc) {
     if (const auto *CAT = Ty->getAs<CountAttributedType>()) {
       SemaRef.Diag(Loc, diag::err_counted_by_on_nested_pointer)
