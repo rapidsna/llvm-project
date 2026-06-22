@@ -9416,6 +9416,9 @@ public:
 
     auto InnerTy = VisitEither(TL.getInnerLoc(),
                                TL.getType().getSingleStepDesugaredType(Ctx));
+    if (InnerTy.isNull())
+      return {};
+
     const CountAttributedType *DCPT = TL.getTypePtr();
 
     return Ctx.getCountAttributedType(
@@ -9434,6 +9437,8 @@ public:
 
     auto InnerTy = VisitEither(TL.getInnerLoc(),
                                TL.getType().getSingleStepDesugaredType(Ctx));
+    if (InnerTy.isNull())
+      return {};
 
     const DynamicRangePointerType *DRPT = TL.getTypePtr();
     return Ctx.getDynamicRangePointerType(
