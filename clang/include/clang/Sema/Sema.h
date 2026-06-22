@@ -16201,6 +16201,13 @@ public:
 
   static LifetimeCheckKind getLifetimeCheckKind(const VarDecl *VD);
 
+  /// Run the lifetime/scope diagnostic for a local VarDecl whose type is
+  /// (or contains) a BoundsAttributedType, mirroring what
+  /// applyPtrCountedByEndedByAttr does on the non-late path. Called from
+  /// the late-parsing path which no longer routes through
+  /// applyPtrCountedByEndedByAttr.
+  void diagnoseLateParseBoundsAttrLifetimeAndScope(VarDecl *VD);
+
   /// Attach \c DependerDeclsAttr to declarations referred to by \c counted_by
   /// or \c sized_by attributes. This doesn't apply to \c ended_by because it
   /// adds a type sugar (i.e., \c DynamicRangePointerType) instead for its

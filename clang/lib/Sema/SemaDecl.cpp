@@ -9099,6 +9099,12 @@ NamedDecl *Sema::ActOnVariableDeclarator(
     // VarDecls, so we wire it up here.
     if (const auto *CATy = NewVD->getType()->getAs<CountAttributedType>())
       AttachDependerDeclsAttr(NewVD, CATy, /*Level=*/0);
+    // Same reason: run the lifetime/scope diagnostic for local vars with
+    // bounds-attributed types. Without this, declarations like
+    //   int *__counted_by(g_global) local_ptr;
+    // miss the "argument of __counted_by attribute cannot refer to declaration
+    // of a different lifetime" error on the late path.
+    diagnoseLateParseBoundsAttrLifetimeAndScope(NewVD);
   }
   /* TO_UPSTREAM(BoundsSafety) OFF*/
 
