@@ -21417,30 +21417,18 @@ void Sema::ProcessLateParsedTypeAttributesForFields(
     auto *TSI = RebuildFieldType.TransformType(FD->getTypeSourceInfo());
     if (TSI && TSI != OldTSI) {
       QualType NewTy = TSI->getType();
-      // Apply __single to pointers with bounds attributes.
-      if (getLangOpts().BoundsSafetyAttributes &&
-          !getLangOpts().isBoundsSafetyAttributeOnlyMode()) {
-        if (auto *BAT = NewTy->getAs<BoundsAttributedType>()) {
-          QualType Inner = BAT->desugar();
-          if (Inner->isPointerType() && !Inner->isSinglePointerType()) {
-            QualType SingleInner = Context.getBoundsSafetyPointerType(
-                Inner, BoundsSafetyPointerAttributes::single());
-            if (auto *CAT = dyn_cast<CountAttributedType>(BAT))
-              NewTy = Context.getCountAttributedType(
-                  SingleInner, CAT->getCountExpr(), CAT->isCountInBytes(),
-                  CAT->isOrNull(), CAT->getCoupledDecls());
-            else if (auto *DRPT = dyn_cast<DynamicRangePointerType>(BAT))
-              NewTy = Context.getDynamicRangePointerType(
-                  SingleInner, DRPT->getStartPointer(), DRPT->getEndPointer(),
-                  DRPT->getStartPtrDecls(), DRPT->getEndPtrDecls());
-          }
-        }
-      }
       FD->setTypeSourceInfo(TSI);
       FD->setType(NewTy);
       if (IFD) {
         IFD->setType(NewTy);
       }
+      // Re-run BoundsSafety pointer auto-deduction. The TreeTransform rebuilt
+      // pointers from TypeLoc-recorded (parsed/unspecified) attributes,
+      // losing the __single (and other auto attributes) that MakeAutoPointer
+      // applied at parse time. Re-running deduce reapplies them recursively
+      // through nested CAT/DRPT/VTT/pointer chains.
+      if (getLangOpts().hasBoundsSafetyAttributes())
+        deduceBoundsSafetyPointerTypes(FD);
     }
   }
 
@@ -21494,43 +21482,15 @@ void Sema::ProcessLateParsedTypeAttributesForParameters(
     if (auto *FPT = TSI->getType()->getAs<FunctionProtoType>()) {
       for (unsigned I = 0; I < FD->getNumParams(); ++I) {
         QualType ParamTy = FPT->getParamType(I);
-        // Apply __single to pointers with bounds attributes.
-        if (getLangOpts().hasBoundsSafetyAttributes() &&
-            !getLangOpts().isBoundsSafetyAttributeOnlyMode()) {
-          if (auto *BAT = ParamTy->getAs<BoundsAttributedType>()) {
-            QualType Inner = BAT->desugar();
-            if (Inner->isPointerType() && !Inner->isSinglePointerType()) {
-              QualType SingleInner = Context.getBoundsSafetyPointerType(
-                  Inner, BoundsSafetyPointerAttributes::single());
-              if (auto *CAT = dyn_cast<CountAttributedType>(BAT))
-                ParamTy = Context.getCountAttributedType(
-                    SingleInner, CAT->getCountExpr(), CAT->isCountInBytes(),
-                    CAT->isOrNull(), CAT->getCoupledDecls());
-              else if (auto *DRPT = dyn_cast<DynamicRangePointerType>(BAT))
-                ParamTy = Context.getDynamicRangePointerType(
-                    SingleInner, DRPT->getStartPointer(),
-                    DRPT->getEndPointer(), DRPT->getStartPtrDecls(),
-                    DRPT->getEndPtrDecls());
-            }
-          } else if (auto *VTT = ParamTy->getAs<ValueTerminatedType>()) {
-            // terminated_by/null_terminated wraps a pointer (or array). The
-            // TreeTransform rebuild reconstructs the inner pointer from the
-            // original TypeLoc, which has unspecified pointer attributes
-            // (the param Decl's QT was promoted to __single by
-            // deduceBoundsSafetyPointerTypes after parsing, but the TSI was
-            // not updated). Re-apply __single to the inner pointer here so
-            // builtins like __terminated_by_to_indexable see a __single
-            // pointer.
-            QualType Inner = VTT->desugar();
-            if (Inner->isPointerType() && !Inner->isSinglePointerType()) {
-              QualType SingleInner = Context.getBoundsSafetyPointerType(
-                  Inner, BoundsSafetyPointerAttributes::single());
-              ParamTy = Context.getValueTerminatedType(
-                  SingleInner, VTT->getTerminatorExpr());
-            }
-          }
-        }
-        FD->getParamDecl(I)->setType(ParamTy);
+        ParmVarDecl *PD = FD->getParamDecl(I);
+        PD->setType(ParamTy);
+        // Re-run BoundsSafety pointer auto-deduction. The TreeTransform
+        // rebuilt pointers from TypeLoc-recorded (parsed/unspecified)
+        // attributes, losing the __single that MakeAutoPointer applied at
+        // parse time. Re-running deduce reapplies it recursively through
+        // nested CAT/DRPT/VTT/pointer chains.
+        if (getLangOpts().hasBoundsSafetyAttributes())
+          deduceBoundsSafetyPointerTypes(PD);
       }
 
       // For ended_by parameters: mark end-pointer parameters with
