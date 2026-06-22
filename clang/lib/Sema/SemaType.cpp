@@ -12208,9 +12208,16 @@ QualType Sema::BuildAtomicType(QualType T, SourceLocation Loc) {
 
     /* TO_UPSTREAM(BoundsSafety) ON*/
     if (LangOpts.BoundsSafety) {
-      assert(!T->isBoundsAttributedType());
       int DiagIndex = -1;
-      if (T->isValueTerminatedType()) {
+      if (const auto *CAT = T->getAs<CountAttributedType>()) {
+        // Late-parsed bounds attributes (e.g. __counted_by) may already be
+        // applied to T by the time _Atomic is built. Map the bounds-attribute
+        // kind to its diagnostic index in the err_bounds_safety_atomic_*
+        // %select.
+        DiagIndex = CAT->getKind() + 2;
+      } else if (T->getAs<DynamicRangePointerType>()) {
+        DiagIndex = BoundsAttributedType::EndedBy + 2;
+      } else if (T->isValueTerminatedType()) {
         DiagIndex = 7;
       } else if (const auto *PT = T->getAs<PointerType>()) {
         BoundsSafetyPointerAttributes FAttr = PT->getPointerAttributes();
