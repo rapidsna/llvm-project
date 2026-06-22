@@ -14359,7 +14359,8 @@ static bool checkArithmeticBinOpBoundsSafetyPointer(Sema &S, Expr *Base,
   // `CheckCountAttributedDeclAssignments::TraverseBinaryOperator`.
   if (const auto *CATTy = BaseType->getAs<CountAttributedType>()) {
     if (S.getLangOpts().hasNewBoundsSafetyCheck(
-            LangOptions::BS_CHK_IndirectCountUpdate)) {
+            LangOptions::BS_CHK_IndirectCountUpdate) &&
+        (OpKind == BO_AddAssign || OpKind == BO_SubAssign)) {
       // TODO: When the diagnostic emitted by
       // `BoundsSafetyCheckCountAttributedTypeHasConstantCountForAssignmentOp`
       // is a hard error we can return false here. However, we can't do that
