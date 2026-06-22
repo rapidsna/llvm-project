@@ -10365,6 +10365,12 @@ ProcessDeclAttribute(Sema &S, Scope *scope, Decl *D, const ParsedAttr &AL,
           << AL << AL.isRegularKeywordAttribute() << D->getLocation();
     handleSimpleAttribute<PointerFieldProtectionAttr>(S, D, AL);
     break;
+
+  /* TO_UPSTREAM(BoundsSafety) ON*/
+  case ParsedAttr::AT_UnsafeLateConst:
+    handleUnsafeLateConst(S, D, AL);
+    break;
+  /* TO_UPSTREAM(BoundsSafety) OFF*/
   }
 }
 
