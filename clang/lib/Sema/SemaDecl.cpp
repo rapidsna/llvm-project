@@ -21192,7 +21192,13 @@ struct RebuildTypeWithLateParsedAttr
 
     AL.setUsedAsTypeAttr();
 
-    if (T->getAs<DynamicRangePointerType>())
+    // Push the TypeLoc matching the result's own class. Use isa<> rather
+    // than getAs<>: when the user writes a conflicting combination like
+    // __counted_by(n) __ended_by(end), T can be CAT(DRPT(...)) (or vice
+    // versa), and getAs<> would look through sugar and report the wrong
+    // class, causing TypeLocBuilder::push to assert on a castAs mismatch.
+    // The conflict itself is diagnosed elsewhere (ValidateBoundsAttrTypeShape).
+    if (isa<DynamicRangePointerType>(T))
       TLB.push<DynamicRangePointerTypeLoc>(T);
     else
       TLB.push<CountAttributedTypeLoc>(T);
