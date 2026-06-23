@@ -20185,6 +20185,28 @@ struct RebuildTypeWithLateParsedAttr
   }
 };
 
+// Determine whether a field's type still contains a LateParsedAttrType
+// placeholder that needs to be resolved. The placeholder may be nested inside
+// pointer/array sugar, so walk the type structure to find it.
+static bool typeHasLateParsedAttr(const ASTContext &Ctx, QualType T) {
+  while (!T.isNull()) {
+    const Type *Ty = T.getTypePtr();
+    if (isa<LateParsedAttrType>(Ty))
+      return true;
+    if (const auto *PT = dyn_cast<PointerType>(Ty)) {
+      T = PT->getPointeeType();
+    } else if (const auto *AT = dyn_cast<ArrayType>(Ty)) {
+      T = AT->getElementType();
+    } else {
+      QualType Desugared = T.getSingleStepDesugaredType(Ctx);
+      if (Desugared == T)
+        break;
+      T = Desugared;
+    }
+  }
+  return false;
+}
+
 void Sema::ProcessLateParsedTypeAttributes(
     RecordDecl *EnclosingDecl, ParseLateParsedTypeAttributeCB *ParseCB) {
   for (auto *I : EnclosingDecl->decls()) {
@@ -20195,7 +20217,8 @@ void Sema::ProcessLateParsedTypeAttributes(
     }
     if (!FD || FD->getType()->isRecordType())
       continue;
-
+    if (!typeHasLateParsedAttr(Context, FD->getType()))
+      continue;
     RebuildTypeWithLateParsedAttr RebuildFieldType(*this, FD, ParseCB);
     auto *OldTSI = FD->getTypeSourceInfo();
     auto *TSI = RebuildFieldType.TransformType(FD->getTypeSourceInfo());
