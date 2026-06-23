@@ -21554,6 +21554,29 @@ void Sema::ProcessLateParsedTypeAttributesForParameters(
         if (auto *DRPT = PD->getType()->getAs<DynamicRangePointerType>())
           AttachStartedByToEndPointers(PD, DRPT);
       }
+
+      // Rebuild the FunctionProtoType so its parameter types reflect the
+      // post-deduce (and post-AttachStartedByToEndPointers) ParmVarDecl
+      // types. Without this the FunctionDecl's type still shows the
+      // pre-deduce pointer attributes from the TreeTransform rebuild
+      // (e.g., 'int *(int *)' instead of 'int *__single(int *__single)').
+      if (getLangOpts().hasBoundsSafetyAttributes()) {
+        llvm::SmallVector<QualType, 4> NewParamTys;
+        NewParamTys.reserve(FD->getNumParams());
+        bool Changed = false;
+        for (unsigned I = 0; I < FD->getNumParams(); ++I) {
+          QualType PDTy = FD->getParamDecl(I)->getType();
+          NewParamTys.push_back(PDTy);
+          if (PDTy.getAsOpaquePtr() != FPT->getParamType(I).getAsOpaquePtr())
+            Changed = true;
+        }
+        if (Changed) {
+          QualType NewFTy = Context.getFunctionType(FPT->getReturnType(),
+                                                   NewParamTys,
+                                                   FPT->getExtProtoInfo());
+          FD->setType(NewFTy);
+        }
+      }
     }
   }
 
