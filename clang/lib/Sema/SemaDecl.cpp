@@ -21141,6 +21141,13 @@ struct RebuildTypeWithLateParsedAttr
     : TreeTransform<RebuildTypeWithLateParsedAttr> {
   ValueDecl *VD;
   Sema::ParseLateParsedTypeAttributeCB *ParseCallback;
+  // True while we're transforming inside a BoundsAttributedType wrapper
+  // (CountAttributedType / DynamicRangePointerType). Used by
+  // diagnoseCountAttributedType to choose between the generic "not allowed"
+  // diagnostic and the parameter-specific "is only allowed on indirect
+  // parameters" diagnostic, mirroring the discrimination in
+  // applyPtrCountedByEndedByAttr (SemaDeclAttr.cpp).
+  bool IsInsideBoundsAttrTransform = false;
 
   RebuildTypeWithLateParsedAttr(Sema &SemaRef, ValueDecl *VD,
                                 Sema::ParseLateParsedTypeAttributeCB *ParseCB)
@@ -21155,17 +21162,26 @@ struct RebuildTypeWithLateParsedAttr
   // custom many Transform*Type, like TransformDependentSizedArrayType.
 
   // Helper to check and diagnose if a type is CountAttributedType.
-  // TODO: This currently emits the generic "not allowed" diagnostic for all
-  // contexts. For function parameters where the outer pointer is *not*
-  // bounds-attributed (the "indirect parameter" pattern, which is valid),
-  // this is a false positive vs the non-late path which suppresses the
-  // diagnostic. Fixing it requires tracking whether the outer pointer has a
-  // bounds-attr from within TransformPointerType. See known follow-up
-  // issues in Late Parsing Refactoring Progress wiki.
+  // Mirrors applyPtrCountedByEndedByAttr's discrimination (SemaDeclAttr.cpp):
+  //   - Non-parameter (field/var): always error with the "indirect parameters"
+  //     wording (it's documented to mean "this construct is only allowed on
+  //     indirect parameters", i.e., disallowed here).
+  //   - Parameter + outer is bounds-attributed: error with the same wording.
+  //   - Parameter + outer is plain: VALID (indirect parameter pattern),
+  //     suppress.
+  // IsInsideBoundsAttrTransform tracks whether we're inside a CAT/DRPT
+  // transform call (i.e., our outer is bounds-attributed).
   bool diagnoseCountAttributedType(QualType Ty, SourceLocation Loc) {
     if (const auto *CAT = Ty->getAs<CountAttributedType>()) {
-      SemaRef.Diag(Loc, diag::err_counted_by_on_nested_pointer)
-          << CAT->getKind();
+      // Indirect parameter (outer pointer has no bounds attr) is allowed.
+      if (isa<FunctionDecl>(VD) && !IsInsideBoundsAttrTransform)
+        return false;
+      // %0 is a single-quoted spelling of the attribute name.
+      static constexpr const char *KindSpelling[] = {
+          "'__counted_by'", "'__sized_by'", "'__counted_by_or_null'",
+          "'__sized_by_or_null'", "'__ended_by'"};
+      SemaRef.Diag(Loc, diag::err_bounds_safety_nested_dynamic_bound)
+          << KindSpelling[CAT->getKind()];
       VD->setInvalidDecl();
       return true;
     }
@@ -21197,7 +21213,17 @@ struct RebuildTypeWithLateParsedAttr
     assert(Attrs.size() == 1);
     auto &AL = Attrs[0];
 
-    QualType InnerType = TransformType(TLB, TL.getInnerLoc());
+    QualType InnerType;
+    {
+      // While transforming the inner type, signal to nested
+      // TransformPointerType calls that they sit inside a bounds-attributed
+      // wrapper. This lets diagnoseCountAttributedType discriminate
+      // parameter contexts where the outer pointer also has a bounds attr
+      // (use the param-specific diagnostic) from indirect-param contexts
+      // where the outer is plain (suppress the diagnostic).
+      llvm::SaveAndRestore<bool> SAR(IsInsideBoundsAttrTransform, true);
+      InnerType = TransformType(TLB, TL.getInnerLoc());
+    }
     if (InnerType.isNull()) {
       VD->setInvalidDecl();
       return QualType();
