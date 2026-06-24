@@ -21186,6 +21186,15 @@ struct RebuildTypeWithLateParsedAttr
       VD->setInvalidDecl();
       return true;
     }
+    if (Ty->getAs<DynamicRangePointerType>()) {
+      // Same indirect-parameter exception as for CAT.
+      if (isa<FunctionDecl>(VD) && !IsInsideBoundsAttrTransform)
+        return false;
+      SemaRef.Diag(Loc, diag::err_bounds_safety_nested_dynamic_bound)
+          << "'__ended_by'";
+      VD->setInvalidDecl();
+      return true;
+    }
     return false;
   }
 
