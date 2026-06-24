@@ -7665,7 +7665,8 @@ static bool diagnoseCountDependentDecls(Sema &S, const ValueDecl *TheDepender,
         }
       }
     }
-    if (!IsFPtr && isa<FieldDecl>(TheDepender) && !isa<FieldDecl>(Dependee)) {
+    if (!IsFPtr && isa<FieldDecl>(TheDepender) &&
+        !isa<FieldDecl, IndirectFieldDecl>(Dependee)) {
       S.Diag(TheDepender->getBeginLoc(),
              diag::err_invalid_decl_kind_bounds_safety_dynamic_count)
           << 0 /*Field*/;

@@ -21511,6 +21511,13 @@ void Sema::ProcessLateParsedTypeAttributesForFields(
     }
     // For ended_by: mark end-pointer fields with started_by(this_field).
     if (auto *DRPT = FD->getType()->getAs<DynamicRangePointerType>()) {
+      // ended_by on a union member is invalid — mirror the union check
+      // CheckCountedByAttrOnFieldDecl does for counted_by/sized_by.
+      if (FD->getParent()->isUnion()) {
+        Diag(FD->getBeginLoc(), diag::err_count_attr_in_union)
+            << BoundsAttributedType::EndedBy << FD->getSourceRange();
+        continue;
+      }
       AttachStartedByToEndPointers(FD, DRPT);
     }
   }
