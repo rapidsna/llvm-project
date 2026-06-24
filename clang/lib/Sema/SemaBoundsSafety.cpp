@@ -244,8 +244,18 @@ bool Sema::CheckCountedByAttrOnFieldDecl(FieldDecl *FD, Expr *E,
   }
 
   if (!E->getType()->isIntegerType() || E->getType()->isBooleanType()) {
-    Diag(E->getBeginLoc(), diag::err_count_attr_argument_not_integer)
-        << Kind << E->getSourceRange();
+    // Match the downstream wording that tests expect. The upstream
+    // err_count_attr_argument_not_integer says "requires a non-boolean
+    // integer type argument" but BoundsSafety tests carry the downstream
+    // wording "attribute requires an integer type argument" from
+    // err_attribute_argument_type_for_bounds_safety_count (emitted by
+    // applyPtrCountedByEndedByAttr on the non-late path).
+    static constexpr const char *KindSpelling[] = {
+        "'__counted_by'", "'__sized_by'", "'__counted_by_or_null'",
+        "'__sized_by_or_null'"};
+    Diag(E->getBeginLoc(),
+         diag::err_attribute_argument_type_for_bounds_safety_count)
+        << KindSpelling[Kind] << E->getSourceRange();
     return true;
   }
 
