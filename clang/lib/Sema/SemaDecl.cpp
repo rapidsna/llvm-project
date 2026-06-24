@@ -21564,11 +21564,20 @@ void Sema::ProcessLateParsedTypeAttributesForParameters(
         // Validate dependees and (re-)attach DependerDeclsAttr for params
         // whose CAT was late-parsed. The non-late path does this in
         // applyPtrCountedByEndedByAttr, which T10 no longer routes through.
-        if (const auto *CATy =
-                PD->getType()->getAs<CountAttributedType>()) {
-          if (!diagnoseLateParseCountDependentDecls(PD, CATy, /*Level=*/0,
-                                                    /*IsFPtr=*/false))
-            AttachDependerDeclsAttr(PD, CATy, /*Level=*/0);
+        // The CAT may be on the param's outer type, or one level inside
+        // when the param is "pointer to CAT pointer" (out-pointer pattern).
+        QualType ParamTy = PD->getType();
+        unsigned Deref = 0;
+        const auto *CATy = ParamTy->getAs<CountAttributedType>();
+        if (!CATy && ParamTy->isPointerType()) {
+          CATy = ParamTy->getPointeeType()->getAs<CountAttributedType>();
+          if (CATy)
+            Deref = 1;
+        }
+        if (CATy) {
+          if (!diagnoseLateParseCountDependentDecls(
+                  PD, CATy, /*Level=*/Deref, /*IsFPtr=*/false))
+            AttachDependerDeclsAttr(PD, CATy, /*Level=*/Deref);
         }
       }
 
