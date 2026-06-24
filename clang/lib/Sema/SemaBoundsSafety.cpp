@@ -259,6 +259,16 @@ bool Sema::CheckCountedByAttrOnFieldDecl(FieldDecl *FD, Expr *E,
     return true;
   }
 
+  // For BoundsSafety on a pointer-typed field, the count expression has
+  // already been validated by CountArgChecker during BuildCountAttributedType
+  // (arbitrary arithmetic is permitted, especially for `__sized_by`). The
+  // simple-decl-ref requirement below is an upstream-C23 rule for
+  // counted_by on flexible array members; skipping it avoids spurious
+  // diagnostics like "'sized_by' argument must be a simple declaration
+  // reference" for `__sized_by(size - 1)`.
+  if (getLangOpts().BoundsSafety && FieldTy->isPointerType())
+    return false;
+
   auto *DRE = dyn_cast<DeclRefExpr>(E->IgnoreParenImpCasts());
   if (!DRE) {
     Diag(E->getBeginLoc(),
