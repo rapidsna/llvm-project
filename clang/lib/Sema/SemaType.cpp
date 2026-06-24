@@ -10200,6 +10200,31 @@ static void HandleCountedByAttrOnType(TypeProcessingState &State,
       Attr.setInvalid();
       return;
     }
+    // Reject `typedef T __counted_by(N) X;` when X isn't a function type or
+    // function pointer. Mirrors applyPtrCountedByEndedByAttr's check at
+    // SemaDeclAttr.cpp:7825-7829 (which the late path doesn't go through for
+    // typedefs).
+    Declarator &D = State.getDeclarator();
+    if (D.getDeclSpec().getStorageClassSpec() == DeclSpec::SCS_typedef) {
+      bool HasFunctionChunk = false;
+      for (unsigned I = 0, E = D.getNumTypeObjects(); I != E; ++I) {
+        if (D.getTypeObject(I).Kind == DeclaratorChunk::Function) {
+          HasFunctionChunk = true;
+          break;
+        }
+      }
+      if (!HasFunctionChunk) {
+        static constexpr const char *KindSpelling[] = {
+            "'__counted_by'", "'__sized_by'", "'__counted_by_or_null'",
+            "'__sized_by_or_null'"};
+        unsigned Kind = static_cast<unsigned>(Flags.OrNull) << 1 |
+                        static_cast<unsigned>(Flags.CountInBytes);
+        S.Diag(Attr.getLoc(), diag::err_bounds_safety_typedef_dynamic_bound)
+            << KindSpelling[Kind];
+        Attr.setInvalid();
+        return;
+      }
+    }
     CurType = S.BuildCountAttributedType(CurType, CountExpr, Flags.CountInBytes,
                                          Flags.OrNull);
   } else {
