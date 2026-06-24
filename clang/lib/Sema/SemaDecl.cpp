@@ -21561,6 +21561,15 @@ void Sema::ProcessLateParsedTypeAttributesForParameters(
         ParmVarDecl *PD = FD->getParamDecl(I);
         if (auto *DRPT = PD->getType()->getAs<DynamicRangePointerType>())
           AttachStartedByToEndPointers(PD, DRPT);
+        // Validate dependees and (re-)attach DependerDeclsAttr for params
+        // whose CAT was late-parsed. The non-late path does this in
+        // applyPtrCountedByEndedByAttr, which T10 no longer routes through.
+        if (const auto *CATy =
+                PD->getType()->getAs<CountAttributedType>()) {
+          if (!diagnoseLateParseCountDependentDecls(PD, CATy, /*Level=*/0,
+                                                    /*IsFPtr=*/false))
+            AttachDependerDeclsAttr(PD, CATy, /*Level=*/0);
+        }
       }
 
       // Rebuild the FunctionProtoType so its parameter types reflect the
