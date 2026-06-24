@@ -5313,11 +5313,6 @@ void Parser::ParseStructUnionBody(SourceLocation RecordLoc,
       if (DS.getTypeSpecType() == TST_struct) {
 
         if (getLangOpts().ExperimentalLateParseAttributes) {
-          auto *RD = dyn_cast<RecordDecl>(DS.getRepAsDecl());
-          if (RD && !RD->isAnonymousStructOrUnion()) {
-            Actions.ProcessLateParsedTypeAttributesForFields(
-                RD, ParseLateParsedTypeAttributeCallback);
-          }
         } else {
           DiagnoseCountAttributedTypeInUnnamedAnon(DS, *this);
         }
@@ -5387,8 +5382,14 @@ void Parser::ParseStructUnionBody(SourceLocation RecordLoc,
 
   Scope *ParentScope = getCurScope()->getParent();
   assert(ParentScope);
+  // For C, also run the late-parse pass when ParentScope is a class scope
+  // (i.e. this is a nested or anonymous struct): the nested struct's own
+  // scope is still active here, so its fields are visible to the late-parsed
+  // bounds-attribute arguments. The previous `!ParentScope->isClassScope()`
+  // guard was C++-motivated (see the "FIXME: Properly handle CXX structs"
+  // note above); keep it for C++ where ActOnFields runs differently.
   if (getLangOpts().ExperimentalLateParseAttributes &&
-      !ParentScope->isClassScope())
+      (!ParentScope->isClassScope() || !getLangOpts().CPlusPlus))
     Actions.ProcessLateParsedTypeAttributesForFields(
         TagDecl, ParseLateParsedTypeAttributeCallback);
   StructScope.Exit();
