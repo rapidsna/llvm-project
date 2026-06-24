@@ -21544,6 +21544,38 @@ void Sema::ProcessLateParsedTypeAttributesForParameters(
       for (unsigned I = 0; I < FD->getNumParams(); ++I) {
         QualType ParamTy = FPT->getParamType(I);
         ParmVarDecl *PD = FD->getParamDecl(I);
+        // Re-do the VLA-as-param decay to CAT before storing the type. The
+        // parse-time conversion (CheckParameter in SemaDecl.cpp:17050) wraps
+        // VLA-with-size params like `int buf[len + 1]` in CountAttributedType
+        // via BuildCountAttributedType, but the TreeTransform rebuilt the
+        // param's type from its VLA TypeLoc, clobbering the CAT. Without
+        // this, `int buf[len + 1]` ends up as a plain __single pointer and
+        // trips the array-decay-to-__single diagnostic.
+        if (getLangOpts().BoundsSafety) {
+          auto *TSInfo = PD->getTypeSourceInfo();
+          if (TSInfo && !TSInfo->getType()->hasAttr(
+                            attr::ArrayDecayDiscardsCountInParameters)) {
+            if (auto *AT = Context.getAsArrayType(TSInfo->getType())) {
+              Expr *Count = nullptr;
+              if (auto *CAT2 = dyn_cast<ConstantArrayType>(AT)) {
+                ArrayTypeLoc ATL =
+                    TSInfo->getTypeLoc().getAsAdjusted<ArrayTypeLoc>();
+                Count = ATL.isNull()
+                            ? new (Context) IntegerLiteral(
+                                  Context, CAT2->getSize(),
+                                  Context.getSizeType(), SourceLocation())
+                            : ATL.getSizeExpr();
+              } else if (auto *VAT = dyn_cast<VariableArrayType>(AT)) {
+                Count = VAT->getSizeExpr();
+              } else if (auto *DAT =
+                             dyn_cast<DependentSizedArrayType>(AT)) {
+                Count = DAT->getSizeExpr();
+              }
+              if (Count && !ParamTy->getAs<CountAttributedType>())
+                ParamTy = BuildCountAttributedType(ParamTy, Count, false);
+            }
+          }
+        }
         PD->setType(ParamTy);
         // Re-run BoundsSafety pointer auto-deduction. The TreeTransform
         // rebuilt pointers from TypeLoc-recorded (parsed/unspecified)
