@@ -7683,6 +7683,12 @@ static bool diagnoseCountDependentDecls(Sema &S, const ValueDecl *TheDepender,
   return HadError;
 }
 
+bool Sema::diagnoseLateParseCountDependentDecls(const ValueDecl *Depender,
+                                                const CountAttributedType *CAT,
+                                                unsigned Level, bool IsFPtr) {
+  return diagnoseCountDependentDecls(*this, Depender, CAT, Level, IsFPtr);
+}
+
 /// Diagnose compatibility between a declaration whose type is annotated with
 /// \c ended_by and the declarations referred to by the annotation.
 ///

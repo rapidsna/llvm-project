@@ -21496,9 +21496,17 @@ void Sema::ProcessLateParsedTypeAttributesForFields(
       continue;
 
     if (auto *CAT = FD->getType()->getAs<CountAttributedType>()) {
-      AttachDependerDeclsAttr(FD, CAT, /*Level=*/0);
-      CheckCountedByAttrOnFieldDecl(FD, CAT->getCountExpr(),
-                                    CAT->isCountInBytes(), CAT->isOrNull());
+      // Validate dependee kinds (e.g. siblings of the same struct) before
+      // attaching DependerDeclsAttr, mirroring applyPtrCountedByEndedByAttr.
+      // If diagnoseLateParseCountDependentDecls emits an error, skip the
+      // attach so that DCPAA's DepGroup doesn't pick up an invalid dependee
+      // and emit secondary spurious errors.
+      if (!diagnoseLateParseCountDependentDecls(FD, CAT, /*Level=*/0,
+                                                /*IsFPtr=*/false)) {
+        AttachDependerDeclsAttr(FD, CAT, /*Level=*/0);
+        CheckCountedByAttrOnFieldDecl(FD, CAT->getCountExpr(),
+                                      CAT->isCountInBytes(), CAT->isOrNull());
+      }
     }
     // For ended_by: mark end-pointer fields with started_by(this_field).
     if (auto *DRPT = FD->getType()->getAs<DynamicRangePointerType>()) {

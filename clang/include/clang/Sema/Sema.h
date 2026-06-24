@@ -16208,6 +16208,15 @@ public:
   /// applyPtrCountedByEndedByAttr.
   void diagnoseLateParseBoundsAttrLifetimeAndScope(VarDecl *VD);
 
+  /// Diagnose that the count-expression dependees of a field/parameter
+  /// depender are valid (e.g. siblings of the same struct for FieldDecl,
+  /// parameters of the same function for ParmVarDecl). Returns true if a
+  /// diagnostic was emitted. Wrapper for the late-parsing path so we don't
+  /// need to expose the file-local helper.
+  bool diagnoseLateParseCountDependentDecls(const ValueDecl *Depender,
+                                            const CountAttributedType *CAT,
+                                            unsigned Level, bool IsFPtr);
+
   /// Attach \c DependerDeclsAttr to declarations referred to by \c counted_by
   /// or \c sized_by attributes. This doesn't apply to \c ended_by because it
   /// adds a type sugar (i.e., \c DynamicRangePointerType) instead for its
