@@ -10189,6 +10189,17 @@ static void HandleCountedByAttrOnType(TypeProcessingState &State,
       Attr.setInvalid();
       return;
     }
+    // Reject duplicate count attribute on the same type, e.g.
+    //   int * __counted_by(n) __counted_by(n) ptr;
+    // CurType is already wrapped in CAT by the previous handler call; mirror
+    // diagnoseCountAttributedTypeShape (SemaDeclAttr.cpp:6473-6494).
+    if (const auto *PrevCAT = CurType->getAs<CountAttributedType>()) {
+      S.Diag(Attr.getLoc(),
+             diag::err_bounds_safety_conflicting_pointer_attributes)
+          << PrevCAT->isPointerType() << /*count*/ 2;
+      Attr.setInvalid();
+      return;
+    }
     CurType = S.BuildCountAttributedType(CurType, CountExpr, Flags.CountInBytes,
                                          Flags.OrNull);
   } else {

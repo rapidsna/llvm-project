@@ -21230,6 +21230,35 @@ struct RebuildTypeWithLateParsedAttr
       return QualType();
     }
 
+    // Detect duplicate count or end attribute on the same type:
+    //   int *__counted_by(n) __counted_by(n) p;
+    //   int arr[__counted_by(n) __counted_by(n)];
+    // After the inner LateParsedAttr resolves, InnerType is already wrapped
+    // in CAT (for counted_by/sized_by) or DRPT (for ended_by). Wrapping
+    // another bounds-attributed layer around it would silently nest the
+    // attribute. Mirror diagnoseCountAttributedTypeShape's duplicate check
+    // from applyPtrCountedByEndedByAttr (SemaDeclAttr.cpp:6473-6494).
+    auto Flags = Sema::getBoundsAttrFlags(AL.getKind());
+    if (!Flags.IsEndedBy) {
+      if (const auto *InnerCAT = InnerType->getAs<CountAttributedType>()) {
+        SemaRef.Diag(AL.getLoc(),
+                     diag::err_bounds_safety_conflicting_pointer_attributes)
+            << InnerCAT->isPointerType() << /*count*/ 2;
+        AL.setInvalid();
+        VD->setInvalidDecl();
+        return InnerType;
+      }
+    } else {
+      if (InnerType->getAs<DynamicRangePointerType>()) {
+        SemaRef.Diag(AL.getLoc(),
+                     diag::err_bounds_safety_conflicting_pointer_attributes)
+            << /*pointer*/ 1 << /*end*/ 3;
+        AL.setInvalid();
+        VD->setInvalidDecl();
+        return InnerType;
+      }
+    }
+
     QualType T = BuildBoundsAttrType(SemaRef, InnerType, VD, AL);
 
     if (T.isNull()) {
