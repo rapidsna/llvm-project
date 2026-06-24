@@ -249,7 +249,7 @@ bool Sema::CheckCountedByAttrOnFieldDecl(FieldDecl *FD, Expr *E,
     return true;
   }
 
-  auto *DRE = dyn_cast<DeclRefExpr>(E);
+  auto *DRE = dyn_cast<DeclRefExpr>(E->IgnoreParenImpCasts());
   if (!DRE) {
     Diag(E->getBeginLoc(),
          diag::err_count_attr_only_support_simple_decl_reference)
