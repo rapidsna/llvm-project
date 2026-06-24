@@ -16205,8 +16205,8 @@ public:
   /// (or contains) a BoundsAttributedType, mirroring what
   /// applyPtrCountedByEndedByAttr does on the non-late path. Called from
   /// the late-parsing path which no longer routes through
-  /// applyPtrCountedByEndedByAttr.
-  void diagnoseLateParseBoundsAttrLifetimeAndScope(VarDecl *VD);
+  /// applyPtrCountedByEndedByAttr. Returns true if a diagnostic was emitted.
+  bool diagnoseLateParseBoundsAttrLifetimeAndScope(VarDecl *VD);
 
   /// Diagnose that the count-expression dependees of a field/parameter
   /// depender are valid (e.g. siblings of the same struct for FieldDecl,

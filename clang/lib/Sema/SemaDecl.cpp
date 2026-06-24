@@ -9092,19 +9092,20 @@ NamedDecl *Sema::ActOnVariableDeclarator(
   /* TO_UPSTREAM(BoundsSafety) ON*/
   if (getLangOpts().BoundsSafety) {
     deduceBoundsSafetyPointerTypes(NewVD);
-    // Attach DependerDeclsAttr to dependee local vars so the
-    // DynamicCountPointerAssignmentAnalysis can recognize them as count
-    // vars. On the non-late path this is done via applyPtrCountedByEndedByAttr;
-    // on the T10 late-parsing path that helper no longer runs for local
-    // VarDecls, so we wire it up here.
-    if (const auto *CATy = NewVD->getType()->getAs<CountAttributedType>())
-      AttachDependerDeclsAttr(NewVD, CATy, /*Level=*/0);
-    // Same reason: run the lifetime/scope diagnostic for local vars with
-    // bounds-attributed types. Without this, declarations like
-    //   int *__counted_by(g_global) local_ptr;
-    // miss the "argument of __counted_by attribute cannot refer to declaration
-    // of a different lifetime" error on the late path.
-    diagnoseLateParseBoundsAttrLifetimeAndScope(NewVD);
+    // Mirror applyPtrCountedByEndedByAttr's ordering on the non-late path:
+    // lifetime/scope check first, dependee-kind check next, only then
+    // attach DependerDeclsAttr (which DCPAA reads). Skipping the attach on
+    // error matches the non-late path's early-return semantics so DCPAA
+    // doesn't pick up an invalid dependee and emit "variable cannot be
+    // used in other dynamic bounds attributes" follow-ups.
+    bool HadAttrError =
+        diagnoseLateParseBoundsAttrLifetimeAndScope(NewVD);
+    if (const auto *CATy = NewVD->getType()->getAs<CountAttributedType>()) {
+      if (!HadAttrError &&
+          !diagnoseLateParseCountDependentDecls(NewVD, CATy, /*Level=*/0,
+                                                /*IsFPtr=*/false))
+        AttachDependerDeclsAttr(NewVD, CATy, /*Level=*/0);
+    }
   }
   /* TO_UPSTREAM(BoundsSafety) OFF*/
 

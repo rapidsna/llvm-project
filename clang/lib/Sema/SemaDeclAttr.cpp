@@ -7530,17 +7530,18 @@ static bool diagnoseBoundsAttrLifetimeAndScope(
   return HadError;
 }
 
-void Sema::diagnoseLateParseBoundsAttrLifetimeAndScope(VarDecl *VD) {
+bool Sema::diagnoseLateParseBoundsAttrLifetimeAndScope(VarDecl *VD) {
   const auto *BAT = VD->getType()->getAs<BoundsAttributedType>();
   if (!BAT)
-    return;
+    return false;
   // Mirror the ScopeCheck/LifetimeCheck computation from
   // PtrCountedByEndedByAttrInfo (used by applyPtrCountedByEndedByAttr):
   // ScopeCheck is true for local vars; LifetimeCheck tracks
   // NonStaticLocal/StaticLocal/etc. via getLifetimeCheckKind.
   bool ScopeCheck = VD->isLocalVarDecl();
   Sema::LifetimeCheckKind LifetimeCheck = Sema::getLifetimeCheckKind(VD);
-  diagnoseBoundsAttrLifetimeAndScope(*this, BAT, ScopeCheck, LifetimeCheck);
+  return diagnoseBoundsAttrLifetimeAndScope(*this, BAT, ScopeCheck,
+                                            LifetimeCheck);
 }
 
 unsigned TransitiveFieldCopyCount(const RecordDecl *RD,
