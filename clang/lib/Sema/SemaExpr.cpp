@@ -12171,12 +12171,20 @@ AssignConvertType Sema::CheckAssignmentConstraints(QualType LHSType,
         if (Result != AssignConvertType::Compatible)
           return Result;
       } else if (OrigLHSType->isBoundsAttributedType() &&
-                 RHSType->isSinglePointerType()) {
+                 RHSType->isSinglePointerType() &&
+                 !RHS.get()->getType()->isBoundsAttributedType()) {
         // Single to dynamic bounds pointer should first create an implicit cast
         // to `__bidi_indexable` and then create any necessary cast such as
         // bitcast in the following example. `void *__sized_by(len) dst = (int
         // *__single)src`
-        assert(!RHS.get()->getType()->isBoundsAttributedType());
+        //
+        // The RHS-not-bounds-attributed guard skips CAT-to-CAT conversions
+        // (e.g. `(uint32_t * __sized_by(size)) &s.value` passed as a
+        // CAT-typed argument). `isSinglePointerType()` walks through CAT
+        // sugar to find the inner __single pointer, so it returns true for
+        // sugared-single CAT types -- without the extra guard we'd enter
+        // the single-to-CAT path with a CAT RHS and trip the assert at the
+        // bidi conversion below.
         if (ConvertRHS) {
           QualType BidiRTy = Context.getPointerType(
               RHSPointer->getPointeeType(),
