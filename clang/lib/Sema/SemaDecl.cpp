@@ -21299,6 +21299,26 @@ struct RebuildTypeWithLateParsedAttr
       return QualType();
     }
 
+    // Diagnose pointer to incomplete __counted_by array, e.g.
+    //   int (*ptr)[__counted_by(n)];
+    // The non-late path's applyPtrCountedByEndedByAttr emits
+    // `err_bounds_safety_unsupported_address_of_incomplete_array_type` for
+    // this shape via its `Info.Ty->isArrayType() && Info.EffectiveLevel > 0`
+    // check (SemaDeclAttr.cpp:7951). Mirror it here.
+    if (const auto *PointeeCAT =
+            PointeeType->getAs<CountAttributedType>()) {
+      QualType Wrapped = PointeeCAT->desugar();
+      if (Wrapped->isArrayType()) {
+        SemaRef.Diag(
+            TL.getSigilLoc(),
+            diag::err_bounds_safety_unsupported_address_of_incomplete_array_type)
+            << Wrapped;
+        VD->setInvalidDecl();
+        // Apply attribute anyway to avoid misleading follow-up diagnostics
+        // (same comment as non-late path).
+      }
+    }
+
     // Diagnose nested pointer with counted_by attribute
     // e.g., int * __counted_by(n) *ptr;
     if (diagnoseCountAttributedType(PointeeType, TL.getSigilLoc()))
