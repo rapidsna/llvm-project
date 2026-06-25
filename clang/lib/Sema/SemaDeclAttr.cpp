@@ -7665,13 +7665,28 @@ static bool diagnoseCountDependentDecls(Sema &S, const ValueDecl *TheDepender,
         }
       }
     }
-    if (!IsFPtr && isa<FieldDecl>(TheDepender) &&
-        !isa<FieldDecl, IndirectFieldDecl>(Dependee)) {
-      S.Diag(TheDepender->getBeginLoc(),
-             diag::err_invalid_decl_kind_bounds_safety_dynamic_count)
-          << 0 /*Field*/;
-      HadError = true;
-      continue;
+    if (!IsFPtr && isa<FieldDecl>(TheDepender)) {
+      if (!isa<FieldDecl, IndirectFieldDecl>(Dependee)) {
+        S.Diag(TheDepender->getBeginLoc(),
+               diag::err_invalid_decl_kind_bounds_safety_dynamic_count)
+            << 0 /*Field*/;
+        HadError = true;
+        continue;
+      }
+      // For IndirectFieldDecl (anonymous-struct member referenced from an
+      // enclosing record), check that the underlying FieldDecl lives in the
+      // same RecordDecl as TheDepender. Otherwise the count is in a different
+      // (nested anon) struct than the pointer/array — invalid.
+      if (auto *IFD = dyn_cast<IndirectFieldDecl>(Dependee)) {
+        const FieldDecl *DependerFD = cast<FieldDecl>(TheDepender);
+        if (IFD->getAnonField()->getParent() != DependerFD->getParent()) {
+          S.Diag(TheDepender->getBeginLoc(),
+                 diag::err_invalid_decl_kind_bounds_safety_dynamic_count)
+              << 0 /*Field*/;
+          HadError = true;
+          continue;
+        }
+      }
     }
     if ((IsFPtr || isa<ParmVarDecl>(TheDepender)) &&
         !isa<ParmVarDecl>(Dependee)) {
