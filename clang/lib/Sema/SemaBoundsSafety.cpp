@@ -115,6 +115,11 @@ bool Sema::ValidateBoundsAttrTypeShape(QualType Ty, SourceLocation AttrLoc,
     } else if (PointeeTy->isFunctionType()) {
       InvalidTypeKind = 2; // FUNCTION
     } else if (PointeeTy->isStructureTypeWithFlexibleArrayMember()) {
+      // __sized_by gives a byte count, which is well-defined even when the
+      // static struct size is unknown (FAM). Only flag the FAM-pointee case
+      // for the count-of-elements family.
+      if (Flags.CountInBytes)
+        return true;
       if (Ty->isArrayType() && !getLangOpts().BoundsSafety)
         ShouldWarn = true;
       InvalidTypeKind = 3; // FLEXIBLE_ARRAY_MEMBER
