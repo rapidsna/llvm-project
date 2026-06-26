@@ -10231,6 +10231,18 @@ static void HandleCountedByAttrOnType(TypeProcessingState &State,
         return;
       }
     }
+    // If the type is already wrapped in `ValueTerminatedType`
+    // (e.g. `char *__null_terminated __counted_by(0) p`), the count
+    // attribute is invalid: __terminated_by pointers must be __single.
+    // The reverse order (`__counted_by(0) __null_terminated`) is caught
+    // by the VTT handler walking the CAT TypeLoc, but VTT-first then
+    // count needs its own check.
+    if (CurType->getAs<ValueTerminatedType>()) {
+      S.Diag(Attr.getLoc(),
+             diag::err_bounds_safety_terminated_by_wrong_pointer_type);
+      Attr.setInvalid();
+      return;
+    }
     CurType = S.BuildCountAttributedType(CurType, CountExpr, Flags.CountInBytes,
                                          Flags.OrNull);
   } else {
