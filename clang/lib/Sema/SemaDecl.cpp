@@ -21626,6 +21626,31 @@ void Sema::ProcessLateParsedTypeAttributesForParameters(
     FD->setTypeSourceInfo(TSI);
     FD->setType(TSI->getType());
 
+    // Diagnose nested CAT/DRPT in the function's return type. The TreeTransform
+    // pass via diagnoseCountAttributedType handles nested cases in parameters
+    // and field types, but for function return types it suppresses the
+    // diagnostic under the indirect-parameter exception (the same outer-
+    // pointer-plus-inner-CAT pattern is valid for parameters but never for
+    // return types). Re-check the rebuilt return type here.
+    if (auto *FPT = TSI->getType()->getAs<FunctionProtoType>()) {
+      QualType RetTy = FPT->getReturnType();
+      if (const auto *PT = RetTy->getAs<PointerType>()) {
+        QualType Pointee = PT->getPointeeType();
+        if (const auto *RetCAT = Pointee->getAs<CountAttributedType>()) {
+          static constexpr const char *KindSpelling[] = {
+              "'__counted_by'", "'__sized_by'", "'__counted_by_or_null'",
+              "'__sized_by_or_null'", "'__ended_by'"};
+          Diag(FD->getLocation(), diag::err_bounds_safety_nested_dynamic_bound)
+              << KindSpelling[RetCAT->getKind()];
+          FD->setInvalidDecl();
+        } else if (Pointee->getAs<DynamicRangePointerType>()) {
+          Diag(FD->getLocation(), diag::err_bounds_safety_nested_dynamic_bound)
+              << "'__ended_by'";
+          FD->setInvalidDecl();
+        }
+      }
+    }
+
     // Sync existing ParmVarDecl types from the rebuilt function type.
     if (auto *FPT = TSI->getType()->getAs<FunctionProtoType>()) {
       for (unsigned I = 0; I < FD->getNumParams(); ++I) {
