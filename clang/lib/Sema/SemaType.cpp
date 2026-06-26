@@ -6379,6 +6379,12 @@ namespace {
     void VisitCountAttributedTypeLoc(CountAttributedTypeLoc TL) {
       // nothing
     }
+    void VisitDynamicRangePointerTypeLoc(DynamicRangePointerTypeLoc TL) {
+      // nothing — mirrors the CAT case above. Needed when `__ended_by` is
+      // applied eagerly to a non-function/non-field decl (e.g. a global)
+      // via processTypeAttrs, which produces a DRPT-wrapped type that
+      // the declarator chunk filler visits.
+    }
     void VisitLateParsedAttrTypeLoc(LateParsedAttrTypeLoc TL) {
       fillAttrNameLocForLateParsedAttrTypeLoc(State.getSema(), TL);
     }
@@ -10548,6 +10554,26 @@ static void processTypeAttrs(TypeProcessingState &state, QualType &type,
           attr.setUsedAsTypeAttr();
           break;
         }
+      }
+      // For non-typedef contexts (globals, locals), eagerly apply the
+      // `__ended_by` attribute by wrapping the type with DRPT. Without
+      // this the attribute is silently dropped — globals like
+      // `int *__ended_by(end) start;` end up plain `int *` and DCPAA
+      // can't fire the "requires corresponding assignment" check.
+      Sema &S = state.getSema();
+      Expr *EndPtrExpr = attr.getArgAsExpr(0);
+      if (EndPtrExpr) {
+        Sema::BoundsAttrFlags Flags = Sema::getBoundsAttrFlags(attr.getKind());
+        if (!S.ValidateBoundsAttrTypeShape(type, attr.getLoc(),
+                                           attr.getRange(), Flags)) {
+          attr.setInvalid();
+          attr.setUsedAsTypeAttr();
+          break;
+        }
+        QualType T = S.BuildDynamicRangePointerType(
+            type, /*StartPtr=*/nullptr, EndPtrExpr, /*ScopeCheck=*/false);
+        if (!T.isNull())
+          type = T;
       }
       attr.setUsedAsTypeAttr();
       break;

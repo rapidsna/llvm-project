@@ -9106,6 +9106,16 @@ NamedDecl *Sema::ActOnVariableDeclarator(
                                                 /*IsFPtr=*/false))
         AttachDependerDeclsAttr(NewVD, CATy, /*Level=*/0);
     }
+    // For globals/locals with `__ended_by`, wrap the end-pointer's type
+    // with started_by info. The non-late path runs this via
+    // applyPtrCountedByEndedByAttr's MakeStartedByPointerTypes; the late
+    // path's `AttachStartedByToEndPointers` covers fields and function
+    // parameters but not globals. Without this the end-pointer's type
+    // stays plain `T*` and `CheckDynamicBoundVariableEscape` /
+    // `CheckDynamicCountSizeForAssignment` can't fire the "requires
+    // corresponding assignment" diagnostics.
+    if (auto *DRPT = NewVD->getType()->getAs<DynamicRangePointerType>())
+      AttachStartedByToEndPointers(NewVD, DRPT);
   }
   /* TO_UPSTREAM(BoundsSafety) OFF*/
 
