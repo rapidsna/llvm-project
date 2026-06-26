@@ -21691,6 +21691,79 @@ void Sema::ProcessLateParsedTypeAttributesForParameters(
           if (!diagnoseLateParseCountDependentDecls(
                   PD, CATy, /*Level=*/Deref, /*IsFPtr=*/false))
             AttachDependerDeclsAttr(PD, CATy, /*Level=*/Deref);
+          // Mirror applyPtrCountedByEndedByAttr (SemaDeclAttr.cpp:7855-7886):
+          // `__counted_by_or_null` / `__sized_by_or_null` on a parameter
+          // cannot be combined with `__attribute__((nonnull))`. The non-late
+          // path catches this; the late path doesn't go through it for
+          // late-parsed CAT params, so re-check here.
+          //
+          // Also mirror the nullability-vs-or_null warnings. For Deref==0
+          // the relevant nullability is on the param's outer pointer
+          // (PD->getType()->getNullability()); for Deref==1 it's on the
+          // inner pointer that the CAT wraps (CATy->desugar()->getNullability()).
+          QualType NullabilityCarrier =
+              Deref == 0 ? PD->getType() : CATy->desugar();
+          NullabilityKindOrNone AttrNullability =
+              NullabilityCarrier->getNullability();
+          if (CATy->isOrNull()) {
+            if (Deref == 0) {
+              if (auto *NNAttr = PD->getAttr<NonNullAttr>()) {
+                Diag(PD->getLocation(),
+                     diag::err_bounds_safety_nullable_dynamic_count_nonnullable)
+                    << CATy->isCountInBytes() << NNAttr
+                    << PD->getSourceRange() << NNAttr->getRange();
+              } else if (AttrNullability == NullabilityKind::NonNull) {
+                Diag(PD->getLocation(),
+                     diag::warn_bounds_safety_nullable_dynamic_count_nonnullable)
+                    << CATy->isCountInBytes();
+              }
+            } else if (AttrNullability == NullabilityKind::NonNull) {
+              Diag(PD->getLocation(),
+                   diag::warn_bounds_safety_nullable_dynamic_count_nonnullable)
+                  << CATy->isCountInBytes();
+            }
+          } else {
+            // Non-or_null CAT: warn if count is a non-zero constant and
+            // the pointer is marked _Nullable.
+            if (auto CountArg =
+                    CATy->getCountExpr()->getIntegerConstantExpr(Context)) {
+              if (*CountArg > 0 &&
+                  AttrNullability == NullabilityKind::Nullable)
+                Diag(CATy->getCountExpr()->getExprLoc(),
+                     diag::warn_bounds_safety_nonnullable_dynamic_count_nullable)
+                    << CATy->isCountInBytes() << PD->getSourceRange();
+            }
+          }
+        }
+      }
+
+      // For the function's RETURN type, mirror the same nullability checks.
+      // Non-late path applies these via applyPtrCountedByEndedByAttr; on the
+      // late path the return type is rebuilt by TreeTransform but the
+      // nullability warnings/errors aren't re-emitted.
+      QualType RetTy = FPT->getReturnType();
+      if (const auto *RetCAT = RetTy->getAs<CountAttributedType>()) {
+        NullabilityKindOrNone RetNullability = RetTy->getNullability();
+        if (RetCAT->isOrNull()) {
+          if (auto *RNNAttr = FD->getAttr<ReturnsNonNullAttr>()) {
+            Diag(FD->getLocation(),
+                 diag::err_bounds_safety_nullable_dynamic_count_nonnullable)
+                << RetCAT->isCountInBytes() << RNNAttr
+                << FD->getSourceRange() << RNNAttr->getRange();
+          } else if (RetNullability == NullabilityKind::NonNull) {
+            Diag(FD->getLocation(),
+                 diag::warn_bounds_safety_nullable_dynamic_count_nonnullable)
+                << RetCAT->isCountInBytes();
+          }
+        } else {
+          if (auto CountArg =
+                  RetCAT->getCountExpr()->getIntegerConstantExpr(Context)) {
+            if (*CountArg > 0 &&
+                RetNullability == NullabilityKind::Nullable)
+              Diag(RetCAT->getCountExpr()->getExprLoc(),
+                   diag::warn_bounds_safety_nonnullable_dynamic_count_nullable)
+                  << RetCAT->isCountInBytes() << FD->getSourceRange();
+          }
         }
       }
 
