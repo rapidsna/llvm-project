@@ -21281,6 +21281,37 @@ struct RebuildTypeWithLateParsedAttr
     // attribute. Mirror diagnoseCountAttributedTypeShape's duplicate check
     // from applyPtrCountedByEndedByAttr (SemaDeclAttr.cpp:6473-6494).
     auto Flags = Sema::getBoundsAttrFlags(AL.getKind());
+    // Conflict between explicit bound attribute (__bidi_indexable /
+    // __indexable) and __counted_by family / __ended_by. Mirror
+    // diagnoseCountAttributedTypeShape's check at SemaDeclAttr.cpp:6582-6587
+    // — the late path doesn't go through that helper, so re-check here.
+    // Pre-check before BuildBoundsAttrType so that on conflict we can bail
+    // (skip building the CAT/DRPT) and mark the decl invalid to suppress
+    // follow-up scope diagnostics (e.g. "count expression in function
+    // declaration may only reference parameters of that function" for a
+    // global count expression).
+    if (const auto *InnerPT = InnerType->getAs<PointerType>()) {
+      auto FAttr = InnerPT->getPointerAttributes();
+      if (FAttr.hasUpperBound() && !InnerType->hasAttr(attr::PtrAutoAttr)) {
+        unsigned DiagKind;
+        if (Flags.IsEndedBy)
+          DiagKind = 4; // '__ended_by'
+        else if (Flags.CountInBytes)
+          DiagKind = Flags.OrNull ? 3 : 1;
+        else
+          DiagKind = Flags.OrNull ? 2 : 0;
+        static constexpr const char *KindSpelling[] = {
+            "'__counted_by'", "'__sized_by'", "'__counted_by_or_null'",
+            "'__sized_by_or_null'", "'__ended_by'"};
+        SemaRef.Diag(
+            AL.getLoc(),
+            diag::err_bounds_safety_conflicting_count_bound_attributes)
+            << KindSpelling[DiagKind] << (FAttr.hasLowerBound() ? 0 : 1);
+        AL.setInvalid();
+        VD->setInvalidDecl();
+        return InnerType;
+      }
+    }
     if (!Flags.IsEndedBy) {
       if (const auto *InnerCAT = InnerType->getAs<CountAttributedType>()) {
         SemaRef.Diag(AL.getLoc(),
