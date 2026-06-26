@@ -21659,6 +21659,21 @@ void Sema::ProcessLateParsedTypeAttributesForParameters(
         ParmVarDecl *PD = FD->getParamDecl(I);
         if (auto *DRPT = PD->getType()->getAs<DynamicRangePointerType>())
           AttachStartedByToEndPointers(PD, DRPT);
+        // Also handle the indirect-parameter pattern
+        // `int *__ended_by(end) *buf` where the DRPT is nested one level
+        // inside the outer pointer. Without this, the end-pointer parameter
+        // doesn't get its started_by type wrapper and the
+        // `CheckDynamicBoundVariableEscape` check at SemaExpr.cpp:12620
+        // can't detect taking-address of the end pointer (the second loop
+        // there walks the RHS expression's pointee chain looking for a
+        // DRPT/CAT — which only appears if the end pointer's type was
+        // wrapped here).
+        else if (PD->getType()->isPointerType()) {
+          if (auto *DRPT = PD->getType()
+                               ->getPointeeType()
+                               ->getAs<DynamicRangePointerType>())
+            AttachStartedByToEndPointers(PD, DRPT);
+        }
         // Validate dependees and (re-)attach DependerDeclsAttr for params
         // whose CAT was late-parsed. The non-late path does this in
         // applyPtrCountedByEndedByAttr, which T10 no longer routes through.
