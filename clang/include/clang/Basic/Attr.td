@@ -2808,7 +2808,10 @@ def PtrBidiIndexable : TypeAttr {
 
 def PtrEndedBy : DeclOrTypeAttr {
   let Spellings = [Clang<"ended_by">];
-  let Args = [ExprArgument<"EndPtr">, IntArgument<"NestedLevel">];
+  // NestedLevel is filled in programmatically (parser/sema); mark it
+  // optional to match the CountedBy family above so the generic
+  // "exactly N arguments" check doesn't fire on `__ended_by(end)`.
+  let Args = [ExprArgument<"EndPtr">, IntArgument<"NestedLevel", 1>];
   let LateParsed = LateAttrParseExperimentalExt;
   let ParseArgumentsAsUnevaluated = 1;
   let LangOpts = [BoundsSafetyAttributes];
