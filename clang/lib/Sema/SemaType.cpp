@@ -11766,6 +11766,28 @@ QualType Sema::BuildCountAttributedType(QualType PointerTy, Expr *CountExpr,
   if (!SkipSingleAttr &&
       !getLangOpts().isBoundsSafetyAttributeOnlyMode() &&
       !PointerTy->isSinglePointerType()) {
+    // Diagnose `__counted_by` applied to a pointer that already has an
+    // explicit upper-bound attribute (`__bidi_indexable` / `__indexable`).
+    // Mirrors diagnoseCountAttributedTypeShape's check at
+    // SemaDeclAttr.cpp:6582-6587. Skip when the pointer was auto-attributed
+    // (PtrAutoAttr) — that's an internal promotion, not a user-spelled bound.
+    if (const auto *PT = PointerTy->getAs<PointerType>()) {
+      auto FAttr = PT->getPointerAttributes();
+      if (FAttr.hasUpperBound() && !PointerTy->hasAttr(attr::PtrAutoAttr)) {
+        unsigned DiagKind;
+        if (CountInBytes)
+          DiagKind = OrNull ? 3 : 1; // sized_by_or_null / sized_by
+        else
+          DiagKind = OrNull ? 2 : 0; // counted_by_or_null / counted_by
+        static constexpr const char *KindSpelling[] = {
+            "'__counted_by'", "'__sized_by'",
+            "'__counted_by_or_null'", "'__sized_by_or_null'"};
+        Diag(CountExpr->getBeginLoc(),
+             diag::err_bounds_safety_conflicting_count_bound_attributes)
+            << KindSpelling[DiagKind]
+            << (FAttr.hasLowerBound() ? 0 : 1);
+      }
+    }
     PointerTy = Context.getBoundsSafetyPointerType(
         PointerTy, BoundsSafetyPointerAttributes::single());
   }
