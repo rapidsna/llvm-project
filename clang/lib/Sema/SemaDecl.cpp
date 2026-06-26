@@ -21566,6 +21566,27 @@ void Sema::ProcessLateParsedTypeAttributesForFields(
         CheckCountedByAttrOnFieldDecl(FD, CAT->getCountExpr(),
                                       CAT->isCountInBytes(), CAT->isOrNull());
       }
+      // Mirror the nullability checks done for parameters in
+      // ProcessLateParsedTypeAttributesForParameters. Fields can carry
+      // `_Nonnull`/`_Nullable` type nullability on the pointer; combining
+      // `__counted_by_or_null` with `_Nonnull` (or non-zero `__counted_by`
+      // with `_Nullable`) is a documented diagnostic on the non-late path.
+      NullabilityKindOrNone AttrNullability = FD->getType()->getNullability();
+      if (CAT->isOrNull()) {
+        if (AttrNullability == NullabilityKind::NonNull) {
+          Diag(FD->getLocation(),
+               diag::warn_bounds_safety_nullable_dynamic_count_nonnullable)
+              << CAT->isCountInBytes();
+        }
+      } else {
+        if (auto CountArg =
+                CAT->getCountExpr()->getIntegerConstantExpr(Context)) {
+          if (*CountArg > 0 && AttrNullability == NullabilityKind::Nullable)
+            Diag(CAT->getCountExpr()->getExprLoc(),
+                 diag::warn_bounds_safety_nonnullable_dynamic_count_nullable)
+                << CAT->isCountInBytes() << FD->getSourceRange();
+        }
+      }
     }
     // For ended_by: mark end-pointer fields with started_by(this_field).
     if (auto *DRPT = FD->getType()->getAs<DynamicRangePointerType>()) {
