@@ -10521,6 +10521,38 @@ static void processTypeAttrs(TypeProcessingState &state, QualType &type,
       attr.setUsedAsTypeAttr();
       break;
 
+    case ParsedAttr::AT_PtrEndedBy: {
+      // The actual `__ended_by` rebuild happens via the late-parse
+      // `RebuildTypeWithLateParsedAttr` pipeline for fields and parameters.
+      // For non-function typedefs (e.g. `typedef int *__ended_by(g) X;`),
+      // the attribute is eagerly resolved into DS attributes by
+      // ParseDeclaratorInternal and the rebuild pipeline doesn't fire —
+      // mirror the typedef-only-for-function rejection that the
+      // counted_by family does in HandleCountedByAttrOnType (and that
+      // the non-late path's applyPtrCountedByEndedByAttr does at
+      // SemaDeclAttr.cpp:7825-7829).
+      Declarator &D = state.getDeclarator();
+      if (D.getDeclSpec().getStorageClassSpec() == DeclSpec::SCS_typedef) {
+        bool HasFunctionChunk = false;
+        for (unsigned I = 0, E = D.getNumTypeObjects(); I != E; ++I) {
+          if (D.getTypeObject(I).Kind == DeclaratorChunk::Function) {
+            HasFunctionChunk = true;
+            break;
+          }
+        }
+        if (!HasFunctionChunk) {
+          state.getSema().Diag(
+              attr.getLoc(), diag::err_bounds_safety_typedef_dynamic_bound)
+              << "'__ended_by'";
+          attr.setInvalid();
+          attr.setUsedAsTypeAttr();
+          break;
+        }
+      }
+      attr.setUsedAsTypeAttr();
+      break;
+    }
+
     case ParsedAttr::AT_ArrayDecayDiscardsCountInParameters:
       HandleArrayDecayDiscardsCountInParametersAttr(state, attr, type);
       attr.setUsedAsTypeAttr();
