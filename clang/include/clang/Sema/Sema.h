@@ -4518,7 +4518,8 @@ public:
   void CheckTypedefForVariablyModifiedType(Scope *S, TypedefNameDecl *D);
   NamedDecl *ActOnTypedefDeclarator(Scope *S, Declarator &D, DeclContext *DC,
                                     TypeSourceInfo *TInfo,
-                                    LookupResult &Previous);
+                                    LookupResult &Previous,
+                                    ParseLateParsedTypeAttributeCB *ParseCB = nullptr);
 
   /// ActOnTypedefNameDecl - Perform semantic checking for a declaration which
   /// declares a typedef-name, either using the 'typedef' type specifier or via
@@ -4530,7 +4531,8 @@ public:
                                      LookupResult &Previous,
                                      MultiTemplateParamsArg TemplateParamLists,
                                      bool &AddToScope,
-                                     ArrayRef<BindingDecl *> Bindings = {});
+                                     ArrayRef<BindingDecl *> Bindings = {},
+                                     ParseLateParsedTypeAttributeCB *ParseCB = nullptr);
 
 private:
   // Perform a check on an AsmLabel to verify its consistency and emit
@@ -4932,6 +4934,15 @@ public:
   /// Transform parameter types that contain late-parsed type attributes.
   void ProcessLateParsedTypeAttributesForParameters(
       FunctionDecl *FD, ParseLateParsedTypeAttributeCB *ParseCB);
+
+  /// Transform a variable's or typedef's type that contains late-parsed type
+  /// attributes referencing parameters of a nested function type
+  /// (e.g. `void *__counted_by(len) (*fp)(int len)`).
+  /// Re-enters the inner function's prototype scope so the count expression's
+  /// identifiers resolve to the function-type parameters, then runs
+  /// RebuildTypeWithLateParsedAttr on the Decl's TypeSourceInfo.
+  void ProcessLateParsedTypeAttributesForVarOrTypedef(
+      NamedDecl *D, ParseLateParsedTypeAttributeCB *ParseCB);
 
   /// ActOnTagStartDefinition - Invoked when we have entered the
   /// scope of a tag's definition (e.g., for an enumeration, class,

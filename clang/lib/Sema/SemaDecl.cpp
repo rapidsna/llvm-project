@@ -7448,14 +7448,14 @@ NamedDecl *Sema::HandleDeclarator(Scope *S, Declarator &D,
       return nullptr;
     }
 
-    New = ActOnTypedefDeclarator(S, D, DC, TInfo, Previous);
+    New = ActOnTypedefDeclarator(S, D, DC, TInfo, Previous, ParseCB);
   } else if (R->isFunctionType()) {
     New = ActOnFunctionDeclarator(S, D, DC, TInfo, Previous,
                                   TemplateParamLists,
                                   AddToScope, ParseCB);
   } else {
     New = ActOnVariableDeclarator(S, D, DC, TInfo, Previous, TemplateParamLists,
-                                  AddToScope);
+                                  AddToScope, /*Bindings=*/{}, ParseCB);
   }
 
   if (!New)
@@ -7668,7 +7668,8 @@ void Sema::DiagnoseFunctionSpecifiers(const DeclSpec &DS) {
 
 NamedDecl*
 Sema::ActOnTypedefDeclarator(Scope* S, Declarator& D, DeclContext* DC,
-                             TypeSourceInfo *TInfo, LookupResult &Previous) {
+                             TypeSourceInfo *TInfo, LookupResult &Previous,
+                             ParseLateParsedTypeAttributeCB *ParseCB) {
   // Typedef declarators cannot be qualified (C++ [dcl.meaning]p1).
   if (D.getCXXScopeSpec().isSet()) {
     Diag(D.getIdentifierLoc(), diag::err_qualified_typedef_declarator)
@@ -7704,6 +7705,14 @@ Sema::ActOnTypedefDeclarator(Scope* S, Declarator& D, DeclContext* DC,
 
   TypedefDecl *NewTD = ParseTypedefDecl(S, D, TInfo->getType(), TInfo);
   if (!NewTD) return nullptr;
+
+  // If the typedef wraps a function type whose parameters are referenced by a
+  // bounds attribute on an outer chunk (e.g.
+  // `typedef int *__counted_by(len) (*fp)(int len);`), the parser left a
+  // LateParsedAttrType placeholder in TInfo. Resolve it now so subsequent
+  // attribute processing and redeclaration checks see the proper type.
+  if (getLangOpts().ExperimentalLateParseAttributes && ParseCB)
+    ProcessLateParsedTypeAttributesForVarOrTypedef(NewTD, ParseCB);
 
   // Handle attributes prior to checking for duplicates in MergeVarDecl
   ProcessDeclAttributes(S, NewTD, D);
@@ -8619,7 +8628,8 @@ void Sema::CheckAsmLabel(Scope *S, Expr *E, StorageClass SC,
 NamedDecl *Sema::ActOnVariableDeclarator(
     Scope *S, Declarator &D, DeclContext *DC, TypeSourceInfo *TInfo,
     LookupResult &Previous, MultiTemplateParamsArg TemplateParamLists,
-    bool &AddToScope, ArrayRef<BindingDecl *> Bindings) {
+    bool &AddToScope, ArrayRef<BindingDecl *> Bindings,
+    ParseLateParsedTypeAttributeCB *ParseCB) {
   QualType R = TInfo->getType();
   DeclarationName Name = GetNameForDeclarator(D).getName();
 
@@ -9157,6 +9167,14 @@ NamedDecl *Sema::ActOnVariableDeclarator(
 
   // Handle attributes prior to checking for duplicates in MergeVarDecl
   ProcessDeclAttributes(S, NewVD, D);
+
+  // If the variable's type wraps a function type whose parameters are
+  // referenced by a bounds attribute on an outer chunk (e.g.
+  // `void *__counted_by(len) (*fp)(int len);`), the parser left a
+  // LateParsedAttrType placeholder in TInfo. Resolve it now so subsequent
+  // checks see the proper CountAttributedType / DynamicRangePointerType.
+  if (getLangOpts().ExperimentalLateParseAttributes && ParseCB)
+    ProcessLateParsedTypeAttributesForVarOrTypedef(NewVD, ParseCB);
 
   if (getLangOpts().HLSL)
     HLSL().ActOnVariableDeclarator(NewVD);
@@ -21150,7 +21168,7 @@ static QualType BuildBoundsAttrType(Sema &S, QualType T, Decl *D,
 }
 struct RebuildTypeWithLateParsedAttr
     : TreeTransform<RebuildTypeWithLateParsedAttr> {
-  ValueDecl *VD;
+  NamedDecl *VD;
   Sema::ParseLateParsedTypeAttributeCB *ParseCallback;
   // True while we're transforming inside a BoundsAttributedType wrapper
   // (CountAttributedType / DynamicRangePointerType). Used by
@@ -21160,7 +21178,7 @@ struct RebuildTypeWithLateParsedAttr
   // applyPtrCountedByEndedByAttr (SemaDeclAttr.cpp).
   bool IsInsideBoundsAttrTransform = false;
 
-  RebuildTypeWithLateParsedAttr(Sema &SemaRef, ValueDecl *VD,
+  RebuildTypeWithLateParsedAttr(Sema &SemaRef, NamedDecl *VD,
                                 Sema::ParseLateParsedTypeAttributeCB *ParseCB)
       : TreeTransform(SemaRef), VD(VD), ParseCallback(ParseCB) {}
 
@@ -21946,6 +21964,73 @@ void Sema::ProcessLateParsedTypeAttributesForParameters(
           FD->setType(NewFTy);
         }
       }
+    }
+  }
+
+  ActOnPopScope(SourceLocation(), &ProtoScope);
+  CurScope = ProtoScope.getParent();
+}
+
+void Sema::ProcessLateParsedTypeAttributesForVarOrTypedef(
+    NamedDecl *D, ParseLateParsedTypeAttributeCB *ParseCB) {
+  // Variables and typedefs don't need late parsing themselves — the count
+  // expression in `__counted_by(...)` references names that are already in
+  // scope at the declarator's point. The exception is when the variable's
+  // or typedef's type contains an embedded function prototype whose
+  // parameters the count expression references, e.g.
+  //   void *__counted_by(len) (*fptr)(int len);
+  // In that case the late-parse machinery has wrapped the type in a
+  // LateParsedAttrType placeholder; we need to re-enter the inner function
+  // prototype scope and rebuild the type so the placeholder resolves with
+  // the function-type parameters visible to name lookup.
+  TypeSourceInfo *OldTSI = nullptr;
+  if (auto *VD = dyn_cast<VarDecl>(D))
+    OldTSI = VD->getTypeSourceInfo();
+  else if (auto *TD = dyn_cast<TypedefNameDecl>(D))
+    OldTSI = TD->getTypeSourceInfo();
+  else
+    return;
+  if (!OldTSI)
+    return;
+
+  // Walk inward to find the function prototype whose params the count
+  // expression references. FunctionTypeLoc preserves the original
+  // ParmVarDecls (unlike FunctionProtoType, which carries only types).
+  FunctionTypeLoc FTL;
+  for (TypeLoc TL = OldTSI->getTypeLoc(); !TL.isNull();
+       TL = TL.getNextTypeLoc()) {
+    if (auto Found = TL.getAs<FunctionTypeLoc>()) {
+      FTL = Found;
+      break;
+    }
+  }
+  if (!FTL)
+    return;
+
+  Scope ProtoScope(getCurScope(),
+                   Scope::FunctionPrototypeScope | Scope::DeclScope,
+                   getDiagnostics());
+  CurScope = &ProtoScope;
+
+  for (unsigned i = 0, e = FTL.getNumParams(); i != e; ++i)
+    if (auto *PD = FTL.getParam(i))
+      ActOnReenterCXXMethodParameter(getCurScope(), PD);
+
+  RebuildTypeWithLateParsedAttr Rebuild(*this, D, ParseCB);
+  TypeSourceInfo *TSI = Rebuild.TransformType(OldTSI);
+  if (TSI && TSI != OldTSI) {
+    if (auto *VD = dyn_cast<VarDecl>(D)) {
+      VD->setTypeSourceInfo(TSI);
+      VD->setType(TSI->getType());
+      // Re-run BoundsSafety pointer auto-deduction. The TreeTransform rebuilt
+      // pointers from TypeLoc-recorded (parsed/unspecified) attributes,
+      // losing the __single (and other auto attributes) that MakeAutoPointer
+      // applied at parse time. Re-running deduce reapplies them recursively
+      // through nested CAT/DRPT/VTT/pointer chains.
+      if (getLangOpts().hasBoundsSafetyAttributes())
+        deduceBoundsSafetyPointerTypes(VD);
+    } else if (auto *TD = dyn_cast<TypedefNameDecl>(D)) {
+      TD->setTypeSourceInfo(TSI);
     }
   }
 

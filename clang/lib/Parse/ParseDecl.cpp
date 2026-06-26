@@ -6950,8 +6950,22 @@ void Parser::ParseDeclaratorInternal(Declarator &D,
       // cached late-parsed attrs immediately — the count expression is already
       // in scope. For function return types and parameters, leave them cached
       // for ProcessLateParsedTypeAttributesForParameters.
+      //
+      // `isFunctionDeclarator()` only checks whether the innermost non-Paren
+      // chunk is a Function — so it returns false for function-pointer-typed
+      // variables (e.g. `void *__counted_by(len) (*fptr)(int len)`), even
+      // though their declarator chain contains a Function chunk whose
+      // parameters the count expression may reference. Walk the full chunk
+      // chain to exclude those cases from eager-resolve.
+      auto hasFunctionChunk = [&D]() {
+        for (unsigned I = 0, E = D.getNumTypeObjects(); I != E; ++I)
+          if (D.getTypeObject(I).Kind == DeclaratorChunk::Function)
+            return true;
+        return false;
+      };
       if (D.getContext() == DeclaratorContext::File &&
-          !D.isFunctionDeclarator() && !DS.getLateAttributes().empty()) {
+          !D.isFunctionDeclarator() && !hasFunctionChunk() &&
+          !DS.getLateAttributes().empty()) {
         for (auto *LA : DS.getLateAttributes()) {
           if (auto *LTA = dyn_cast<LateParsedTypeAttribute>(LA))
             LTA->ParseInto(DS.getAttributes());
