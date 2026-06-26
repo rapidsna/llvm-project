@@ -9420,11 +9420,24 @@ public:
   QualType
   VisitCountAttributedTypeLoc(const CountAttributedTypeLoc TL) {
     if (DiagIndex < Single) {
+      // %0 should name the existing count-family attribute carried by the
+      // CountAttributedType (e.g. '__counted_by'), not PAttr (which is the
+      // bidi/indexable being applied — that goes in %1 via DiagIndex).
+      const CountAttributedType *CAT = TL.getTypePtr();
+      static constexpr const char *KindSpelling[] = {
+          "'__counted_by'", "'__sized_by'",
+          "'__counted_by_or_null'", "'__sized_by_or_null'"};
       S.Diag(PAttr.getLoc(),
              diag::err_bounds_safety_conflicting_count_bound_attributes)
-          << PAttr << DiagIndex;
+          << KindSpelling[CAT->getKind()] << DiagIndex;
       return TL.getType();
     }
+
+    // CAT wraps an implicit `__single` inner PointerType; treat that inner
+    // bound as auto-applied so VisitPointerTypeLoc doesn't flag a spurious
+    // conflict when the user spells a different bound (e.g.
+    // `int *__counted_by(N) __unsafe_indexable`).
+    SaveAndRestore<bool> SARAutoBounded(AutoBounded, true);
 
     auto InnerTy = VisitEither(TL.getInnerLoc(),
                                TL.getType().getSingleStepDesugaredType(Ctx));
@@ -9441,9 +9454,11 @@ public:
   QualType
   VisitDynamicRangePointerTypeLoc(const DynamicRangePointerTypeLoc TL) {
     if (DiagIndex < Single) {
+      // %0 should name the existing range attribute carried by the
+      // DynamicRangePointerType ('__ended_by'), not PAttr.
       S.Diag(PAttr.getLoc(),
              diag::err_bounds_safety_conflicting_count_bound_attributes)
-          << PAttr << DiagIndex;
+          << "'__ended_by'" << DiagIndex;
       return TL.getType();
     }
 
