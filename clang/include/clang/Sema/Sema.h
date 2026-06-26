@@ -16227,8 +16227,12 @@ public:
 
   /// For a field with __ended_by, mark the end-pointer field(s) with
   /// started_by(this_field). This establishes the bidirectional relationship.
+  /// \p StartIsDeref true when StartField is a pointer to the actual start
+  /// (e.g. the indirect-parameter pattern `int *__ended_by(*end) *out_start`)
+  /// so the started_by references `*StartField` instead of `StartField`.
   void AttachStartedByToEndPointers(ValueDecl *StartField,
-                                    const DynamicRangePointerType *DRPT);
+                                    const DynamicRangePointerType *DRPT,
+                                    bool StartIsDeref = false);
 
   QualType BuildCountAttributedType(QualType PointerTy, Expr *CountExpr,
                                     bool CountInBytes = false,

@@ -21829,7 +21829,7 @@ void Sema::ProcessLateParsedTypeAttributesForParameters(
           if (auto *DRPT = PD->getType()
                                ->getPointeeType()
                                ->getAs<DynamicRangePointerType>())
-            AttachStartedByToEndPointers(PD, DRPT);
+            AttachStartedByToEndPointers(PD, DRPT, /*StartIsDeref=*/true);
         }
         // Validate dependees and (re-)attach DependerDeclsAttr for params
         // whose CAT was late-parsed. The non-late path does this in

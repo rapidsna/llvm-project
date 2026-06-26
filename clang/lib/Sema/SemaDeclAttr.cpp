@@ -7354,8 +7354,9 @@ void Sema::AttachDependerDeclsAttr(
 }
 
 void Sema::AttachStartedByToEndPointers(ValueDecl *StartField,
-                                        const DynamicRangePointerType *DRPT) {
-  TypeCoupledDeclRefInfo StartPtrInfo(StartField, /*Deref=*/false);
+                                        const DynamicRangePointerType *DRPT,
+                                        bool StartIsDeref) {
+  TypeCoupledDeclRefInfo StartPtrInfo(StartField, /*Deref=*/StartIsDeref);
   for (auto EndPtrInfo : DRPT->endptr_decls()) {
     ValueDecl *EndPtrDecl = EndPtrInfo.getDecl();
     unsigned EndPtrLevel = EndPtrInfo.isDeref() ? 1 : 0;
