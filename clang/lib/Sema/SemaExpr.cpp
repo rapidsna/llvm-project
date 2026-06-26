@@ -7994,6 +7994,14 @@ void TryFixSingleToDynamicCount(
     return;
 
   QualType ArgPtrTy = ArgPtrDecl->getType();
+  // The caller's UnboundedRHS check looks at the RHS expression's *type*,
+  // which can be `int *__single` after lvalue-to-rvalue / CAT-promotion
+  // even when the underlying decl still carries the CAT/VTT (e.g.
+  // T10's late-parse pipeline now syncs the CAT to the ParmVarDecl). In
+  // that case there is no fix-it to offer — bail out before the
+  // shape assertion below trips.
+  if (ArgPtrTy->isBoundsAttributedType() || ArgPtrTy->isValueTerminatedType())
+    return;
   // This should be called only if the pointer argument is 'unbounded'.
   assert(ArgPtrTy->isSinglePointerType() &&
          !ArgPtrTy->isBoundsAttributedType() &&
