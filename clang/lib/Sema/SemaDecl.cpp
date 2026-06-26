@@ -21246,6 +21246,29 @@ struct RebuildTypeWithLateParsedAttr
     }
     if (InnerType.isNull()) {
       VD->setInvalidDecl();
+      // Even if the inner transform failed (e.g., a nested-pointer-CAT
+      // rejection in TransformPointerType), still validate the count
+      // expression's type. The test suite expects BOTH diagnostics to
+      // fire for `int *__counted_by(len) *__counted_by(len) buf` where
+      // `len` is non-integer.
+      auto Flags2 = Sema::getBoundsAttrFlags(AL.getKind());
+      if (!Flags2.IsEndedBy) {
+        if (Expr *AttrArg = AL.getArgAsExpr(0)) {
+          QualType ArgTy = AttrArg->getType();
+          if (!ArgTy.isNull() &&
+              (!ArgTy->isIntegerType() || ArgTy->isBooleanType())) {
+            static constexpr const char *KindSpelling[] = {
+                "'__counted_by'", "'__sized_by'",
+                "'__counted_by_or_null'", "'__sized_by_or_null'"};
+            unsigned Kind = static_cast<unsigned>(Flags2.OrNull) << 1 |
+                            static_cast<unsigned>(Flags2.CountInBytes);
+            SemaRef.Diag(
+                AttrArg->getBeginLoc(),
+                diag::err_attribute_argument_type_for_bounds_safety_count)
+                << KindSpelling[Kind] << AttrArg->getSourceRange();
+          }
+        }
+      }
       return QualType();
     }
 
