@@ -21257,11 +21257,30 @@ struct RebuildTypeWithLateParsedAttr
         VD->setInvalidDecl();
         return InnerType;
       }
+      // Count attribute applied over an existing range (ended_by) attribute
+      // is invalid — mirror diagnoseCountAttributedTypeShape at
+      // SemaDeclAttr.cpp:6501-6504 which emits
+      // err_bounds_safety_conflicting_count_range_attributes.
+      if (InnerType->getAs<DynamicRangePointerType>()) {
+        SemaRef.Diag(AL.getLoc(),
+                     diag::err_bounds_safety_conflicting_count_range_attributes);
+        AL.setInvalid();
+        VD->setInvalidDecl();
+        return InnerType;
+      }
     } else {
       if (InnerType->getAs<DynamicRangePointerType>()) {
         SemaRef.Diag(AL.getLoc(),
                      diag::err_bounds_safety_conflicting_pointer_attributes)
             << /*pointer*/ 1 << /*end*/ 3;
+        AL.setInvalid();
+        VD->setInvalidDecl();
+        return InnerType;
+      }
+      // Range (ended_by) attribute applied over an existing count attribute.
+      if (InnerType->getAs<CountAttributedType>()) {
+        SemaRef.Diag(AL.getLoc(),
+                     diag::err_bounds_safety_conflicting_count_range_attributes);
         AL.setInvalid();
         VD->setInvalidDecl();
         return InnerType;
