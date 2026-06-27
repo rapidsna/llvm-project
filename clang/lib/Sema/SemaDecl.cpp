@@ -21179,6 +21179,17 @@ struct RebuildTypeWithLateParsedAttr
   // applyPtrCountedByEndedByAttr (SemaDeclAttr.cpp).
   bool IsInsideBoundsAttrTransform = false;
 
+  // True while the rebuild is descending into a function type (proto or
+  // no-proto). Used to gate the bounds-safety scope check on count
+  // expressions: the check should fire when the bounds attr is on a
+  // function-pointer's return type (where the count must reference a
+  // function parameter, not a foreign decl) but NOT for ordinary struct
+  // field / parameter bounds attrs whose count legitimately references
+  // siblings in the enclosing struct/parameter list. Mirrors the
+  // `IsFPtr` arm of the non-late path's `ScopeCheck` gate at
+  // SemaDeclAttr.cpp:7820.
+  bool IsInsideFunctionType = false;
+
   RebuildTypeWithLateParsedAttr(Sema &SemaRef, NamedDecl *VD,
                                 Sema::ParseLateParsedTypeAttributeCB *ParseCB)
       : TreeTransform(SemaRef), VD(VD), ParseCallback(ParseCB) {}
@@ -21406,6 +21417,60 @@ struct RebuildTypeWithLateParsedAttr
       return QualType();
     }
 
+    // Bounds-safety scope check: each decl referenced by the count/range
+    // expression must be declared in the current scope. This only applies
+    // when the bounds attr is structurally inside a function-pointer type
+    // (return-type position) — the count must reference a function
+    // parameter, not a foreign decl, because the function is invoked from
+    // call sites that don't have access to the surrounding lexical scope.
+    // For ordinary struct field / parameter / local-var bounds attrs whose
+    // count legitimately references siblings, the check is skipped.
+    // When VD is a FunctionDecl (i.e. the rebuild is processing the
+    // function's own parameters or return type — invoked from
+    // ProcessLateParsedTypeAttributesForParameters), the more-specific
+    // `err_invalid_decl_kind_bounds_safety_dynamic_count` diagnostic from
+    // diagnoseLateParseCountDependentDecls already fires; skip here to
+    // avoid a duplicate-and-less-specific error.
+    // Mirrors the `IsFPtr` arm of the non-late path's `ScopeCheck` gate at
+    // SemaDeclAttr.cpp:7820, and uses the same isDeclScope predicate as
+    // CheckArgLifetimeAndScope (SemaDeclAttr.cpp:7392).
+    if (IsInsideFunctionType && !isa<FunctionDecl>(VD)) {
+      if (const auto *BAT = T->getAs<BoundsAttributedType>()) {
+        bool HadScopeError = false;
+        auto CheckDeclInScope = [&](const ValueDecl *Dependee,
+                                    SourceLocation ExprLoc, unsigned Kind) {
+          if (clang::IsConstOrLateConst(Dependee))
+            return;
+          if (!SemaRef.getCurScope()->isDeclScope(
+                  const_cast<ValueDecl *>(Dependee))) {
+            SemaRef.Diag(
+                ExprLoc,
+                diag::err_bounds_safety_dynamic_bound_arg_different_scope)
+                << Kind;
+            HadScopeError = true;
+          }
+        };
+        if (const auto *CAT = dyn_cast<CountAttributedType>(BAT)) {
+          for (const TypeCoupledDeclRefInfo &DepDeclInfo :
+               CAT->dependent_decls())
+            CheckDeclInScope(cast<ValueDecl>(DepDeclInfo.getDecl()),
+                             CAT->getCountExpr()->getExprLoc(),
+                             CAT->getKind());
+        } else if (const auto *DRPT =
+                       dyn_cast<DynamicRangePointerType>(BAT)) {
+          for (const TypeCoupledDeclRefInfo &EndPtrInfo :
+               DRPT->endptr_decls())
+            CheckDeclInScope(cast<ValueDecl>(EndPtrInfo.getDecl()),
+                             DRPT->getEndPointer()->getExprLoc(),
+                             DRPT->getKind());
+        }
+        if (HadScopeError) {
+          AL.setInvalid();
+          VD->setInvalidDecl();
+        }
+      }
+    }
+
     AL.setUsedAsTypeAttr();
 
     // Push the TypeLoc matching the result's own class. Use isa<> rather
@@ -21441,12 +21506,34 @@ struct RebuildTypeWithLateParsedAttr
                      Scope::FunctionPrototypeScope | Scope::DeclScope,
                      SemaRef.getDiagnostics());
     llvm::SaveAndRestore<Scope *> SavedScope(SemaRef.CurScope, &ProtoScope);
+    llvm::SaveAndRestore<bool> SavedInFn(IsInsideFunctionType, true);
 
     for (unsigned i = 0, e = TL.getNumParams(); i != e; ++i)
       if (auto *PD = TL.getParam(i))
         SemaRef.ActOnReenterCXXMethodParameter(SemaRef.getCurScope(), PD);
 
     QualType Result = BaseTransform::TransformFunctionProtoType(TLB, TL);
+
+    SemaRef.ActOnPopScope(SourceLocation(), &ProtoScope);
+    return Result;
+  }
+
+  // Empty parameter list `()` in C parses as FunctionNoProtoType (K&R-style)
+  // rather than FunctionProtoType with zero params. To get the same
+  // "count expression must reference function parameters" diagnostic as the
+  // proto case (e.g. for `void *__sized_by(glen) (*fp)();` rejecting a global
+  // count), push an empty prototype scope here too so the scope check inside
+  // TransformLateParsedAttrType sees an empty FunctionPrototypeScope as the
+  // current scope and rejects any decl reference (no params to match).
+  QualType TransformFunctionNoProtoType(TypeLocBuilder &TLB,
+                                        FunctionNoProtoTypeLoc TL) {
+    Scope ProtoScope(SemaRef.getCurScope(),
+                     Scope::FunctionPrototypeScope | Scope::DeclScope,
+                     SemaRef.getDiagnostics());
+    llvm::SaveAndRestore<Scope *> SavedScope(SemaRef.CurScope, &ProtoScope);
+    llvm::SaveAndRestore<bool> SavedInFn(IsInsideFunctionType, true);
+
+    QualType Result = BaseTransform::TransformFunctionNoProtoType(TLB, TL);
 
     SemaRef.ActOnPopScope(SourceLocation(), &ProtoScope);
     return Result;
