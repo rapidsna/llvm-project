@@ -21168,6 +21168,7 @@ static QualType BuildBoundsAttrType(Sema &S, QualType T, Decl *D,
 }
 struct RebuildTypeWithLateParsedAttr
     : TreeTransform<RebuildTypeWithLateParsedAttr> {
+  using BaseTransform = TreeTransform<RebuildTypeWithLateParsedAttr>;
   NamedDecl *VD;
   Sema::ParseLateParsedTypeAttributeCB *ParseCallback;
   // True while we're transforming inside a BoundsAttributedType wrapper
@@ -21419,6 +21420,36 @@ struct RebuildTypeWithLateParsedAttr
       TLB.push<CountAttributedTypeLoc>(T);
 
     return T;
+  }
+
+  // When the rebuild descends into a function prototype, push the function's
+  // prototype scope so any LateParsedAttrType placeholders encountered while
+  // transforming the return type or parameter types resolve their count
+  // expression identifiers against the function's parameters first. This
+  // implements priority 1 of the dependent-attributes lookup model (function
+  // declarator parameters), with the surrounding scope chain handling
+  // priorities 2 (member namespace) and 3 (lexically enclosing scopes).
+  //
+  // Bring the inherited 5-arg TransformFunctionProtoType overload into scope
+  // — the base class's 2-arg wrapper at TreeTransform.h:6675 calls
+  // getDerived().TransformFunctionProtoType(TLB, TL, ThisCtx, Quals, ExcSpec)
+  // (5 args), which the 2-arg override below would otherwise hide.
+  using BaseTransform::TransformFunctionProtoType;
+  QualType TransformFunctionProtoType(TypeLocBuilder &TLB,
+                                      FunctionProtoTypeLoc TL) {
+    Scope ProtoScope(SemaRef.getCurScope(),
+                     Scope::FunctionPrototypeScope | Scope::DeclScope,
+                     SemaRef.getDiagnostics());
+    llvm::SaveAndRestore<Scope *> SavedScope(SemaRef.CurScope, &ProtoScope);
+
+    for (unsigned i = 0, e = TL.getNumParams(); i != e; ++i)
+      if (auto *PD = TL.getParam(i))
+        SemaRef.ActOnReenterCXXMethodParameter(SemaRef.getCurScope(), PD);
+
+    QualType Result = BaseTransform::TransformFunctionProtoType(TLB, TL);
+
+    SemaRef.ActOnPopScope(SourceLocation(), &ProtoScope);
+    return Result;
   }
 
   QualType TransformPointerType(TypeLocBuilder &TLB, PointerTypeLoc TL) {
@@ -21980,9 +22011,12 @@ void Sema::ProcessLateParsedTypeAttributesForVarOrTypedef(
   // parameters the count expression references, e.g.
   //   void *__counted_by(len) (*fptr)(int len);
   // In that case the late-parse machinery has wrapped the type in a
-  // LateParsedAttrType placeholder; we need to re-enter the inner function
-  // prototype scope and rebuild the type so the placeholder resolves with
-  // the function-type parameters visible to name lookup.
+  // LateParsedAttrType placeholder; the rebuild walker descends into the
+  // function prototype and pushes a proto scope (via
+  // RebuildTypeWithLateParsedAttr::TransformFunctionProtoType) so the
+  // placeholder resolves with the function-type parameters visible to name
+  // lookup — see the dependent-attributes proposal for the lookup priority
+  // (params first, then enclosing scopes).
   TypeSourceInfo *OldTSI = nullptr;
   if (auto *VD = dyn_cast<VarDecl>(D))
     OldTSI = VD->getTypeSourceInfo();
@@ -21993,49 +22027,24 @@ void Sema::ProcessLateParsedTypeAttributesForVarOrTypedef(
   if (!OldTSI)
     return;
 
-  // Walk inward to find the function prototype whose params the count
-  // expression references. FunctionTypeLoc preserves the original
-  // ParmVarDecls (unlike FunctionProtoType, which carries only types).
-  FunctionTypeLoc FTL;
-  for (TypeLoc TL = OldTSI->getTypeLoc(); !TL.isNull();
-       TL = TL.getNextTypeLoc()) {
-    if (auto Found = TL.getAs<FunctionTypeLoc>()) {
-      FTL = Found;
-      break;
-    }
-  }
-  if (!FTL)
-    return;
-
-  Scope ProtoScope(getCurScope(),
-                   Scope::FunctionPrototypeScope | Scope::DeclScope,
-                   getDiagnostics());
-  CurScope = &ProtoScope;
-
-  for (unsigned i = 0, e = FTL.getNumParams(); i != e; ++i)
-    if (auto *PD = FTL.getParam(i))
-      ActOnReenterCXXMethodParameter(getCurScope(), PD);
-
   RebuildTypeWithLateParsedAttr Rebuild(*this, D, ParseCB);
   TypeSourceInfo *TSI = Rebuild.TransformType(OldTSI);
-  if (TSI && TSI != OldTSI) {
-    if (auto *VD = dyn_cast<VarDecl>(D)) {
-      VD->setTypeSourceInfo(TSI);
-      VD->setType(TSI->getType());
-      // Re-run BoundsSafety pointer auto-deduction. The TreeTransform rebuilt
-      // pointers from TypeLoc-recorded (parsed/unspecified) attributes,
-      // losing the __single (and other auto attributes) that MakeAutoPointer
-      // applied at parse time. Re-running deduce reapplies them recursively
-      // through nested CAT/DRPT/VTT/pointer chains.
-      if (getLangOpts().hasBoundsSafetyAttributes())
-        deduceBoundsSafetyPointerTypes(VD);
-    } else if (auto *TD = dyn_cast<TypedefNameDecl>(D)) {
-      TD->setTypeSourceInfo(TSI);
-    }
-  }
+  if (!TSI || TSI == OldTSI)
+    return;
 
-  ActOnPopScope(SourceLocation(), &ProtoScope);
-  CurScope = ProtoScope.getParent();
+  if (auto *VD = dyn_cast<VarDecl>(D)) {
+    VD->setTypeSourceInfo(TSI);
+    VD->setType(TSI->getType());
+    // Re-run BoundsSafety pointer auto-deduction. The TreeTransform rebuilt
+    // pointers from TypeLoc-recorded (parsed/unspecified) attributes,
+    // losing the __single (and other auto attributes) that MakeAutoPointer
+    // applied at parse time. Re-running deduce reapplies them recursively
+    // through nested CAT/DRPT/VTT/pointer chains.
+    if (getLangOpts().hasBoundsSafetyAttributes())
+      deduceBoundsSafetyPointerTypes(VD);
+  } else if (auto *TD = dyn_cast<TypedefNameDecl>(D)) {
+    TD->setTypeSourceInfo(TSI);
+  }
 }
 
 void Sema::ActOnFields(Scope *S, SourceLocation RecLoc, Decl *EnclosingDecl,

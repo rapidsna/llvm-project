@@ -115,6 +115,11 @@ namespace llvm {
 struct InlineAsmIdentifierInfo;
 } // namespace llvm
 
+// Forward declaration of the late-parse type-attribute rebuild walker
+// (defined in clang/lib/Sema/SemaDecl.cpp). Needed so Sema can name it
+// as a friend.
+struct RebuildTypeWithLateParsedAttr;
+
 namespace clang {
 class ADLResult;
 class APValue;
@@ -1869,6 +1874,11 @@ protected:
   friend class ASTReader;
   friend class ASTDeclReader;
   friend class ASTWriter;
+  // Late-parse type-attribute rebuild walker — needs access to CurScope to
+  // push a function-prototype scope during TransformFunctionProtoType so
+  // identifiers in late-parsed bounds-attribute expressions resolve against
+  // function parameters per the dependent-attributes proposal.
+  friend struct ::RebuildTypeWithLateParsedAttr;
 
 private:
   std::optional<std::unique_ptr<DarwinSDKInfo>> CachedDarwinSDKInfo;
