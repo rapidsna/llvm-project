@@ -8387,6 +8387,29 @@ void Parser::ParseBracketDeclarator(Declarator &D) {
 
   MaybeParseCXX11Attributes(DS.getAttributes());
 
+  // For non-function file-scope decls (globals), resolve cached late-parsed
+  // attrs on this array chunk immediately — the count expression is already
+  // in scope. Mirrors the symmetric eager-resolve on the pointer-chunk path
+  // in ParseDeclaratorInternal (search for `hasFunctionChunk` there). Without
+  // this, bracket-form bounds attrs like `extern int iarr[__counted_by(10)]`
+  // sit on the array chunk's LateAttrList with no downstream walker to run
+  // them, and the attribute is silently dropped.
+  auto hasFunctionChunk = [&D]() {
+    for (unsigned I = 0, E = D.getNumTypeObjects(); I != E; ++I)
+      if (D.getTypeObject(I).Kind == DeclaratorChunk::Function)
+        return true;
+    return false;
+  };
+  if (D.getContext() == DeclaratorContext::File &&
+      !D.isFunctionDeclarator() && !hasFunctionChunk() &&
+      !DS.getLateAttributes().empty()) {
+    for (auto *LA : DS.getLateAttributes()) {
+      if (auto *LTA = dyn_cast<LateParsedTypeAttribute>(LA))
+        LTA->ParseInto(DS.getAttributes());
+    }
+    DS.getLateAttributes().clear();
+  }
+
   // Remember that we parsed a array type, and remember its features.
   D.AddTypeInfo(
       DeclaratorChunk::getArray(DS.getTypeQualifiers(), StaticLoc.isValid(),
