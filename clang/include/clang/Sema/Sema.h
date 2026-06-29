@@ -2983,15 +2983,28 @@ public:
 
   /// Validates that a type is eligible for a bounds-safety attribute
   /// (counted_by/sized_by/ended_by). Checks type eligibility (must be pointer
-  /// or array) and pointee/element type validity.
+  /// or array) and pointee/element type validity. When called with a
+  /// non-empty \p DiagName the function additionally runs the consolidated
+  /// per-type-kind conflict checks (VTT, conflicting CAT, conflicting DRPT,
+  /// count-vs-bound, atomic, complete-array-with-count, sized_by-array) —
+  /// the single leaf diagnostic point shared by every caller that constructs
+  /// or rebuilds a bounds-attributed type.
+  ///
   /// Does NOT require a Decl — only the QualType and attribute metadata.
   /// Callable from: ActOnLateParsedTypeAttr (placeholder insertion),
   /// HandleCountedByAttrOnType, applyPtrCountedByEndedByAttr, and
   /// CheckCountedByAttrOnFieldDecl.
-  /// \returns true if the type is valid, false on error.
+  /// \returns true if the type is valid, false on error. The atomic-of-pointer
+  /// case is a special exception: it emits a diagnostic but returns true so
+  /// the calling visitor still constructs the atomic type and downstream
+  /// checks don't double-report.
   bool ValidateBoundsAttrTypeShape(QualType Ty, SourceLocation AttrLoc,
                                    SourceRange AttrRange,
-                                   BoundsAttrFlags &Flags);
+                                   BoundsAttrFlags &Flags,
+                                   StringRef DiagName = {},
+                                   bool AllowRedecl = false,
+                                   bool AutoPtrAttributed = false,
+                                   Expr *AttrArg = nullptr);
 
   /* TO_UPSTREAM(BoundsSafety) OFF*/
 
