@@ -287,9 +287,9 @@ void counted_by_local(void) {
   // expected-error@+1{{_Atomic on '__counted_by' pointer is not yet supported}}
   _Atomic(int *) __counted_by(len) p4;
 
-  // expected-error@+1{{'__counted_by' attribute on nested pointer type is only allowed on indirect parameters}}
+  // expected-error@+1{{_Atomic on '__counted_by' pointer is not yet supported}}
   int *_Atomic __counted_by(len) * _Atomic __unsafe_indexable p5;
-  // expected-error@+1{{'__counted_by' attribute on nested pointer type is only allowed on indirect parameters}}
+  // expected-error@+1{{_Atomic on '__counted_by' pointer is not yet supported}}
   int *__counted_by(len) _Atomic *_Atomic __unsafe_indexable p6;
   // expected-error@+1{{_Atomic on '__counted_by' pointer is not yet supported}}
   _Atomic(int *__counted_by(len)) *_Atomic __unsafe_indexable p7;
@@ -358,9 +358,9 @@ void sized_by_local(void) {
   // expected-error@+1{{_Atomic on '__sized_by' pointer is not yet supported}}
   _Atomic(int *) __sized_by(size) p4;
 
-  // expected-error@+1{{'__sized_by' attribute on nested pointer type is only allowed on indirect parameters}}
+  // expected-error@+1{{_Atomic on '__sized_by' pointer is not yet supported}}
   int *_Atomic __sized_by(size) * _Atomic __unsafe_indexable p5;
-  // expected-error@+1{{'__sized_by' attribute on nested pointer type is only allowed on indirect parameters}}
+  // expected-error@+1{{_Atomic on '__sized_by' pointer is not yet supported}}
   int *__sized_by(size) _Atomic *_Atomic __unsafe_indexable p6;
   // expected-error@+1{{_Atomic on '__sized_by' pointer is not yet supported}}
   _Atomic(int *__sized_by(size)) *_Atomic __unsafe_indexable p7;
@@ -429,9 +429,9 @@ void counted_by_or_null_local(void) {
   // expected-error@+1{{_Atomic on '__counted_by_or_null' pointer is not yet supported}}
   _Atomic(int *) __counted_by_or_null(len) p4;
 
-  // expected-error@+1{{'__counted_by_or_null' attribute on nested pointer type is only allowed on indirect parameters}}
+  // expected-error@+1{{_Atomic on '__counted_by_or_null' pointer is not yet supported}}
   int *_Atomic __counted_by_or_null(len) * _Atomic __unsafe_indexable p5;
-  // expected-error@+1{{'__counted_by_or_null' attribute on nested pointer type is only allowed on indirect parameters}}
+  // expected-error@+1{{_Atomic on '__counted_by_or_null' pointer is not yet supported}}
   int *__counted_by_or_null(len) _Atomic *_Atomic __unsafe_indexable p6;
   // expected-error@+1{{_Atomic on '__counted_by_or_null' pointer is not yet supported}}
   _Atomic(int *__counted_by_or_null(len)) *_Atomic __unsafe_indexable p7;
@@ -500,9 +500,9 @@ void sized_by_or_null_local(void) {
   // expected-error@+1{{_Atomic on '__sized_by_or_null' pointer is not yet supported}}
   _Atomic(int *) __sized_by_or_null(size) p4;
 
-  // expected-error@+1{{'__sized_by_or_null' attribute on nested pointer type is only allowed on indirect parameters}}
+  // expected-error@+1{{_Atomic on '__sized_by_or_null' pointer is not yet supported}}
   int *_Atomic __sized_by_or_null(size) * _Atomic __unsafe_indexable p5;
-  // expected-error@+1{{'__sized_by_or_null' attribute on nested pointer type is only allowed on indirect parameters}}
+  // expected-error@+1{{_Atomic on '__sized_by_or_null' pointer is not yet supported}}
   int *__sized_by_or_null(size) _Atomic *_Atomic __unsafe_indexable p6;
   // expected-error@+1{{_Atomic on '__sized_by_or_null' pointer is not yet supported}}
   _Atomic(int *__sized_by_or_null(size)) *_Atomic __unsafe_indexable p7;

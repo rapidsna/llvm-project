@@ -219,6 +219,18 @@ bool Sema::ValidateBoundsAttrTypeShape(QualType Ty, SourceLocation AttrLoc,
           << Kind << 0;
       return false;
     }
+    // The end-pointer expression itself must not be _Atomic-qualified.
+    // Mirrors the eager-path check in applyPtrCountedByEndedByAttr
+    // (SemaDeclAttr.cpp); having the leaf own this check means the
+    // late-parsing path (TransformLateParsedAttrType) and any future
+    // caller that threads AttrArg through automatically gets it. Skip
+    // when AttrArg isn't supplied — short-form callers (e.g.
+    // CheckCountedByAttrOnField) don't have the expression to inspect.
+    if (AttrArg && AttrArg->getType()->isAtomicType()) {
+      Diag(AttrLoc, diag::err_bounds_safety_atomic_unsupported_attribute)
+          << /*end*/ 8;
+      return false;
+    }
     return true;
   }
 
