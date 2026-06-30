@@ -21889,17 +21889,59 @@ void Sema::ProcessLateParsedTypeAttributesForParameters(
       for (unsigned I = 0; I < FD->getNumParams(); ++I) {
         QualType ParamTy = FPT->getParamType(I);
         ParmVarDecl *PD = FD->getParamDecl(I);
-        // Re-do the VLA-as-param decay to CAT before storing the type. The
+        // Re-do the array-as-param decay to CAT before storing the type. The
         // parse-time conversion (CheckParameter in SemaDecl.cpp:17050) wraps
         // VLA-with-size params like `int buf[len + 1]` in CountAttributedType
         // via BuildCountAttributedType, but the TreeTransform rebuilt the
         // param's type from its VLA TypeLoc, clobbering the CAT. Without
         // this, `int buf[len + 1]` ends up as a plain __single pointer and
         // trips the array-decay-to-__single diagnostic.
+        //
+        // The late-parsed bracket counted_by case
+        // (`int *ptrs[__counted_by(size)]`) has the same shape problem from
+        // a different angle: after the LateParsedAttrType placeholder
+        // resolves, the TSI has `CAT(IncompleteArray)` on its original
+        // side, but the decayed/adjusted side fed to ParamTy is still the
+        // bare pointer because ASTContext::getArrayDecayedType does not
+        // propagate CAT. Re-wrap the decayed pointer here, extracting the
+        // count info from the CAT.
+        // Re-do the array-as-param decay to CAT before storing the type.
+        //
+        // (a) VLA case: `int buf[len + 1]` — CheckParameter at parse time
+        //     wraps the VLA in CAT via BuildCountAttributedType, but the
+        //     TreeTransform rebuilt the param's type from its VLA TypeLoc,
+        //     clobbering the CAT. Without the re-wrap, the param ends up
+        //     as a plain __single pointer and trips the array-decay-to-
+        //     __single diagnostic.
+        // (b) Bracket counted_by case: `int *ptrs[__counted_by(size)]` —
+        //     the late-parsed `__counted_by` resolves to a CAT around the
+        //     IncompleteArray on the *original* side of the param's
+        //     DecayedType, but the decayed/adjusted side fed to ParamTy
+        //     remains a bare pointer because
+        //     ASTContext::getArrayDecayedType does not propagate CAT.
+        //     Same symptom — bare-pointer decay, "__single" diagnostic.
         if (getLangOpts().BoundsSafety) {
+          // (b) Bracket counted_by: ParamTy is a DecayedType whose
+          //     original side carries the CAT. Use the count info from the
+          //     CAT and wrap the decayed pointer.
+          if (!ParamTy->getAs<CountAttributedType>()) {
+            if (const auto *DT = dyn_cast<DecayedType>(ParamTy.getTypePtr())) {
+              if (const auto *CAT =
+                      DT->getOriginalType()->getAs<CountAttributedType>()) {
+                if (DT->getOriginalType()->isArrayType())
+                  ParamTy = BuildCountAttributedType(
+                      DT->getDecayedType(), CAT->getCountExpr(),
+                      CAT->isCountInBytes(), CAT->isOrNull());
+              }
+            }
+          }
+
+          // (a) VLA case: TSI keeps the original VLA TypeLoc; extract the
+          //     size expression from there.
           auto *TSInfo = PD->getTypeSourceInfo();
           if (TSInfo && !TSInfo->getType()->hasAttr(
-                            attr::ArrayDecayDiscardsCountInParameters)) {
+                            attr::ArrayDecayDiscardsCountInParameters) &&
+              !ParamTy->getAs<CountAttributedType>()) {
             if (auto *AT = Context.getAsArrayType(TSInfo->getType())) {
               Expr *Count = nullptr;
               if (auto *CAT2 = dyn_cast<ConstantArrayType>(AT)) {
@@ -21916,7 +21958,7 @@ void Sema::ProcessLateParsedTypeAttributesForParameters(
                              dyn_cast<DependentSizedArrayType>(AT)) {
                 Count = DAT->getSizeExpr();
               }
-              if (Count && !ParamTy->getAs<CountAttributedType>())
+              if (Count)
                 ParamTy = BuildCountAttributedType(ParamTy, Count, false);
             }
           }
