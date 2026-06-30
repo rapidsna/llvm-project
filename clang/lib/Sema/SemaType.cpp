@@ -10205,26 +10205,22 @@ static void HandleCountedByAttrOnType(TypeProcessingState &State,
   /* TO_UPSTREAM(BoundsSafety) ON */
   if (S.getLangOpts().BoundsSafetyAttributes) {
     auto Flags = Sema::getBoundsAttrFlags(Attr.getKind());
-    if (!S.ValidateBoundsAttrTypeShape(CurType, Attr.getLoc(),
-                                       Attr.getRange(), Flags)) {
-      Attr.setInvalid();
-      return;
-    }
-    // Reject duplicate count attribute on the same type, e.g.
-    //   int * __counted_by(n) __counted_by(n) ptr;
-    // CurType is already wrapped in CAT by the previous handler call; mirror
-    // diagnoseCountAttributedTypeShape (SemaDeclAttr.cpp:6473-6494).
-    if (const auto *PrevCAT = CurType->getAs<CountAttributedType>()) {
-      S.Diag(Attr.getLoc(),
-             diag::err_bounds_safety_conflicting_pointer_attributes)
-          << PrevCAT->isPointerType() << /*count*/ 2;
+    const IdentifierInfo *AttrName =
+        Attr.printMacroName() ? Attr.getMacroIdentifier() : Attr.getAttrName();
+    std::string DiagName = ("'" + AttrName->getName() + "'").str();
+    if (!S.ValidateBoundsAttrTypeShape(
+            CurType, Attr.getLoc(), Attr.getRange(), Flags, DiagName,
+            /*AllowRedecl=*/false,
+            /*AutoPtrAttributed=*/CurType->hasAttr(attr::PtrAutoAttr),
+            CountExpr)) {
       Attr.setInvalid();
       return;
     }
     // Reject `typedef T __counted_by(N) X;` when X isn't a function type or
     // function pointer. Mirrors applyPtrCountedByEndedByAttr's check at
     // SemaDeclAttr.cpp:7825-7829 (which the late path doesn't go through for
-    // typedefs).
+    // typedefs). This is a declarator-shape check, not a type-shape check,
+    // so it stays in the type-attr handler instead of the leaf.
     Declarator &D = State.getDeclarator();
     if (D.getDeclSpec().getStorageClassSpec() == DeclSpec::SCS_typedef) {
       bool HasFunctionChunk = false;
@@ -10245,18 +10241,6 @@ static void HandleCountedByAttrOnType(TypeProcessingState &State,
         Attr.setInvalid();
         return;
       }
-    }
-    // If the type is already wrapped in `ValueTerminatedType`
-    // (e.g. `char *__null_terminated __counted_by(0) p`), the count
-    // attribute is invalid: __terminated_by pointers must be __single.
-    // The reverse order (`__counted_by(0) __null_terminated`) is caught
-    // by the VTT handler walking the CAT TypeLoc, but VTT-first then
-    // count needs its own check.
-    if (CurType->getAs<ValueTerminatedType>()) {
-      S.Diag(Attr.getLoc(),
-             diag::err_bounds_safety_terminated_by_wrong_pointer_type);
-      Attr.setInvalid();
-      return;
     }
     CurType = S.BuildCountAttributedType(CurType, CountExpr, Flags.CountInBytes,
                                          Flags.OrNull);
@@ -10279,10 +10263,12 @@ bool Sema::ActOnLateParsedTypeAttr(ParsedAttr::Kind AttrKind,
                                    SourceLocation AttrNameLoc, QualType &type,
                                    unsigned pointerNestLevel,
                                    LateParsedTypeAttribute *LTA) {
-  auto Flags = getBoundsAttrFlags(AttrKind);
-  if (!ValidateBoundsAttrTypeShape(type, AttrNameLoc, SourceRange(AttrNameLoc),
-                                   Flags))
-    return false;
+  // All shape/conflict/pointee validation is deferred to
+  // RebuildTypeWithLateParsedAttr::TransformLateParsedAttrType in
+  // SemaDecl.cpp, which calls Sema::ValidateBoundsAttrTypeShape on the
+  // inner-resolved type. Validating here would double-emit pointee
+  // diagnostics (the same diag fires again on TreeTransform when the
+  // inner placeholder resolves to the same pointee).
   type = getASTContext().getLateParsedAttrType(type, LTA);
   return true;
 }
@@ -11781,28 +11767,10 @@ QualType Sema::BuildCountAttributedType(QualType PointerTy, Expr *CountExpr,
   if (!SkipSingleAttr &&
       !getLangOpts().isBoundsSafetyAttributeOnlyMode() &&
       !PointerTy->isSinglePointerType()) {
-    // Diagnose `__counted_by` applied to a pointer that already has an
-    // explicit upper-bound attribute (`__bidi_indexable` / `__indexable`).
-    // Mirrors diagnoseCountAttributedTypeShape's check at
-    // SemaDeclAttr.cpp:6582-6587. Skip when the pointer was auto-attributed
-    // (PtrAutoAttr) — that's an internal promotion, not a user-spelled bound.
-    if (const auto *PT = PointerTy->getAs<PointerType>()) {
-      auto FAttr = PT->getPointerAttributes();
-      if (FAttr.hasUpperBound() && !PointerTy->hasAttr(attr::PtrAutoAttr)) {
-        unsigned DiagKind;
-        if (CountInBytes)
-          DiagKind = OrNull ? 3 : 1; // sized_by_or_null / sized_by
-        else
-          DiagKind = OrNull ? 2 : 0; // counted_by_or_null / counted_by
-        static constexpr const char *KindSpelling[] = {
-            "'__counted_by'", "'__sized_by'",
-            "'__counted_by_or_null'", "'__sized_by_or_null'"};
-        Diag(CountExpr->getBeginLoc(),
-             diag::err_bounds_safety_conflicting_count_bound_attributes)
-            << KindSpelling[DiagKind]
-            << (FAttr.hasLowerBound() ? 0 : 1);
-      }
-    }
+    // The upper-bound conflict diag (counted_by + __bidi_indexable /
+    // __indexable) is emitted by Sema::ValidateBoundsAttrTypeShape at every
+    // caller site, so we don't re-emit it here. Just promote the pointer to
+    // __single as the canonical single-bound pointer.
     PointerTy = Context.getBoundsSafetyPointerType(
         PointerTy, BoundsSafetyPointerAttributes::single());
   }

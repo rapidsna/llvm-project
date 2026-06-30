@@ -21302,83 +21302,25 @@ struct RebuildTypeWithLateParsedAttr
       return QualType();
     }
 
-    // Detect duplicate count or end attribute on the same type:
-    //   int *__counted_by(n) __counted_by(n) p;
-    //   int arr[__counted_by(n) __counted_by(n)];
-    // After the inner LateParsedAttr resolves, InnerType is already wrapped
-    // in CAT (for counted_by/sized_by) or DRPT (for ended_by). Wrapping
-    // another bounds-attributed layer around it would silently nest the
-    // attribute. Mirror diagnoseCountAttributedTypeShape's duplicate check
-    // from applyPtrCountedByEndedByAttr (SemaDeclAttr.cpp:6473-6494).
+    // Detect any conflict that arose after the inner LateParsedAttr resolved:
+    // InnerType may now be wrapped in CAT (for counted_by/sized_by), DRPT
+    // (for ended_by), VTT, or be a pointer with an explicit upper-bound
+    // (__bidi_indexable / __indexable). The consolidated leaf is the single
+    // diagnostic point for every per-type-kind conflict; thread the attr's
+    // spelling, count/range argument, and AutoPtrAttributed flag through.
     auto Flags = Sema::getBoundsAttrFlags(AL.getKind());
-    // Conflict between explicit bound attribute (__bidi_indexable /
-    // __indexable) and __counted_by family / __ended_by. Mirror
-    // diagnoseCountAttributedTypeShape's check at SemaDeclAttr.cpp:6582-6587
-    // — the late path doesn't go through that helper, so re-check here.
-    // Pre-check before BuildBoundsAttrType so that on conflict we can bail
-    // (skip building the CAT/DRPT) and mark the decl invalid to suppress
-    // follow-up scope diagnostics (e.g. "count expression in function
-    // declaration may only reference parameters of that function" for a
-    // global count expression).
-    if (const auto *InnerPT = InnerType->getAs<PointerType>()) {
-      auto FAttr = InnerPT->getPointerAttributes();
-      if (FAttr.hasUpperBound() && !InnerType->hasAttr(attr::PtrAutoAttr)) {
-        unsigned DiagKind;
-        if (Flags.IsEndedBy)
-          DiagKind = 4; // '__ended_by'
-        else if (Flags.CountInBytes)
-          DiagKind = Flags.OrNull ? 3 : 1;
-        else
-          DiagKind = Flags.OrNull ? 2 : 0;
-        static constexpr const char *KindSpelling[] = {
-            "'__counted_by'", "'__sized_by'", "'__counted_by_or_null'",
-            "'__sized_by_or_null'", "'__ended_by'"};
-        SemaRef.Diag(
-            AL.getLoc(),
-            diag::err_bounds_safety_conflicting_count_bound_attributes)
-            << KindSpelling[DiagKind] << (FAttr.hasLowerBound() ? 0 : 1);
-        AL.setInvalid();
-        VD->setInvalidDecl();
-        return InnerType;
-      }
-    }
-    if (!Flags.IsEndedBy) {
-      if (const auto *InnerCAT = InnerType->getAs<CountAttributedType>()) {
-        SemaRef.Diag(AL.getLoc(),
-                     diag::err_bounds_safety_conflicting_pointer_attributes)
-            << InnerCAT->isPointerType() << /*count*/ 2;
-        AL.setInvalid();
-        VD->setInvalidDecl();
-        return InnerType;
-      }
-      // Count attribute applied over an existing range (ended_by) attribute
-      // is invalid — mirror diagnoseCountAttributedTypeShape at
-      // SemaDeclAttr.cpp:6501-6504 which emits
-      // err_bounds_safety_conflicting_count_range_attributes.
-      if (InnerType->getAs<DynamicRangePointerType>()) {
-        SemaRef.Diag(AL.getLoc(),
-                     diag::err_bounds_safety_conflicting_count_range_attributes);
-        AL.setInvalid();
-        VD->setInvalidDecl();
-        return InnerType;
-      }
-    } else {
-      if (InnerType->getAs<DynamicRangePointerType>()) {
-        SemaRef.Diag(AL.getLoc(),
-                     diag::err_bounds_safety_conflicting_pointer_attributes)
-            << /*pointer*/ 1 << /*end*/ 3;
-        AL.setInvalid();
-        VD->setInvalidDecl();
-        return InnerType;
-      }
-      // Range (ended_by) attribute applied over an existing count attribute.
-      if (InnerType->getAs<CountAttributedType>()) {
-        SemaRef.Diag(AL.getLoc(),
-                     diag::err_bounds_safety_conflicting_count_range_attributes);
-        AL.setInvalid();
-        VD->setInvalidDecl();
-        return InnerType;
-      }
+    Expr *AttrArg = AL.getArgAsExpr(0);
+    const IdentifierInfo *AttrName =
+        AL.printMacroName() ? AL.getMacroIdentifier() : AL.getAttrName();
+    std::string DiagName = ("'" + AttrName->getName() + "'").str();
+    if (!SemaRef.ValidateBoundsAttrTypeShape(
+            InnerType, AL.getLoc(), AL.getRange(), Flags, DiagName,
+            /*AllowRedecl=*/false,
+            /*AutoPtrAttributed=*/InnerType->hasAttr(attr::PtrAutoAttr),
+            AttrArg)) {
+      AL.setInvalid();
+      VD->setInvalidDecl();
+      return InnerType;
     }
 
     // Mirror applyPtrCountedByEndedByAttr (SemaDeclAttr.cpp:8001-8011): if
@@ -21389,7 +21331,7 @@ struct RebuildTypeWithLateParsedAttr
     // 'const' attribute" diagnostic for the wrong root cause. Bail out
     // (don't build the CAT) so downstream validators don't double-report.
     if (!Flags.IsEndedBy) {
-      if (Expr *AttrArg = AL.getArgAsExpr(0)) {
+      if (AttrArg) {
         QualType ArgTy = AttrArg->getType();
         if (!ArgTy.isNull() &&
             !ArgTy->isIntegralOrEnumerationType()) {
