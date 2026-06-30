@@ -16568,6 +16568,17 @@ static void checkAtomicAutoPointerAttrs(Sema &S, const Decl *D) {
   const auto *VD = dyn_cast<ValueDecl>(D);
   if (!VD)
     return;
+  // If the decl is already invalid, a more specific diagnostic for the
+  // atomic-of-bounds-attributed-pointer case (e.g. counted_by + _Atomic)
+  // was already emitted upstream — by ValidateBoundsAttrTypeShape's leaf
+  // in TransformLateParsedAttrType / HandleCountedByAttrOnType /
+  // ConstructDynamicBoundType::Visit, which then bails without
+  // constructing the CAT/DRPT wrapper. Auto-bound promotes the inner
+  // pointer to __bidi_indexable, which would otherwise trip this check
+  // and emit a second (less specific) diagnostic at the _Atomic
+  // location. Skip the redundant emission.
+  if (D->isInvalidDecl())
+    return;
   QualType Ty = VD->getType();
   for (;;) {
     // If we auto bound an atomic pointer, we should have:
