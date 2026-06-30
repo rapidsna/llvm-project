@@ -21323,6 +21323,21 @@ struct RebuildTypeWithLateParsedAttr
       return InnerType;
     }
 
+    // _Atomic wrapping a pointer is a soft-error case: the leaf above
+    // emitted err_bounds_safety_atomic_unsupported_attribute but returned
+    // true (the same recovery shape the deleted ConstructDynamicBoundType
+    // walker used to preserve, where VisitAtomicType unwrapped the Atomic,
+    // wrapped the inner pointer in CAT, and re-wrapped in Atomic). The
+    // late path doesn't have that visitor — BuildCountAttributedType
+    // asserts that its WrappedTy is a pointer/array, so feeding it an
+    // AtomicType crashes (ASTContext::getCountAttributedType assert).
+    // Bail out invalid here; the diagnostic the user sees is correct.
+    if (InnerType->isAtomicType()) {
+      AL.setInvalid();
+      VD->setInvalidDecl();
+      return InnerType;
+    }
+
     // Mirror applyPtrCountedByEndedByAttr (SemaDeclAttr.cpp:8001-8011): if
     // the count expression has a non-integer type (e.g. a call to a const
     // function returning `void`), emit the integer-type diagnostic BEFORE

@@ -10216,6 +10216,27 @@ static void HandleCountedByAttrOnType(TypeProcessingState &State,
       Attr.setInvalid();
       return;
     }
+    // _Atomic wrapping a pointer is a soft-error case: the leaf above
+    // emitted err_bounds_safety_atomic_unsupported_attribute but returned
+    // true. Mirror the deleted ConstructDynamicBoundType::VisitAtomicType
+    // walker behavior — unwrap the Atomic, wrap the inner pointer in CAT,
+    // re-wrap in Atomic. Without this:
+    //   * BuildCountAttributedType asserts (WrappedTy must be
+    //     pointer/array; AtomicType isn't), and
+    //   * skipping the wrap leaves the type as Atomic(int *__bidi_indexable),
+    //     which then trips Sema::BuildAtomicType /
+    //     ConstructBoundsSafetyPointerType::VisitAtomicTypeLoc to emit the
+    //     same diagnostic with the auto-bound spelling
+    //     (`'__bidi_indexable'`) rather than the user-spelled
+    //     `'__counted_by'` the leaf already emitted.
+    if (const auto *ATy = CurType->getAs<AtomicType>()) {
+      if (ATy->getValueType()->isPointerType()) {
+        QualType InnerCAT = S.BuildCountAttributedType(
+            ATy->getValueType(), CountExpr, Flags.CountInBytes, Flags.OrNull);
+        CurType = S.Context.getAtomicType(InnerCAT);
+        return;
+      }
+    }
     // Reject `typedef T __counted_by(N) X;` when X isn't a function type or
     // function pointer. Mirrors applyPtrCountedByEndedByAttr's check at
     // SemaDeclAttr.cpp:7825-7829 (which the late path doesn't go through for
