@@ -6736,6 +6736,7 @@ protected:
   const StringRef DiagName;
   Expr *ArgExpr;
   SourceLocation Loc;
+  Sema::BoundsAttrFlags Flags;
   const BoundsAttributedType *ConstructedType = nullptr;
   unsigned Level;
   bool ScopeCheck;
@@ -6746,12 +6747,35 @@ protected:
 public:
   explicit ConstructDynamicBoundType(Sema &S, unsigned Level,
                                      const StringRef DiagName, Expr *ArgExpr,
-                                     SourceLocation Loc, bool ScopeCheck,
-                                     bool AllowRedecl)
-      : S(S), DiagName(DiagName), ArgExpr(ArgExpr), Loc(Loc), Level(Level),
-        ScopeCheck(ScopeCheck), AllowRedecl(AllowRedecl) {}
+                                     SourceLocation Loc,
+                                     Sema::BoundsAttrFlags Flags,
+                                     bool ScopeCheck, bool AllowRedecl)
+      : S(S), DiagName(DiagName), ArgExpr(ArgExpr), Loc(Loc), Flags(Flags),
+        Level(Level), ScopeCheck(ScopeCheck), AllowRedecl(AllowRedecl) {}
 
   QualType Visit(QualType T) {
+    // Run the consolidated leaf check at the level the attr is being applied.
+    // The leaf rejects conflicting wrappers (VTT, CAT, DRPT, Atomic-of-pointer,
+    // pointer-with-upper-bound) and the array Level-0 shape mismatches, plus
+    // validates the pointee/element type. Higher levels descend through
+    // pointer wrappers without running the leaf — sugar peel and recursion
+    // belong to the visitor, not the leaf.
+    //
+    // Skip the leaf for:
+    //   - Function types (transparent containers): VisitFunctionProtoType /
+    //     VisitFunctionNoProtoType recurse on the return type at the same
+    //     Level, where the leaf fires on the actual wrap target.
+    //   - AttributedType: VisitAttributedType peels it (and tracks
+    //     PtrAutoAttr through AutoPtrAttributed) before recursing on the
+    //     inner type — firing the leaf here too would double-emit pointee
+    //     diagnostics.
+    if (Level == 0 && !T->isFunctionType() &&
+        !isa<AttributedType>(T.getTypePtr()) &&
+        !S.ValidateBoundsAttrTypeShape(T, Loc, SourceRange(Loc), Flags,
+                                       DiagName, AllowRedecl, AutoPtrAttributed,
+                                       ArgExpr)) {
+      return QualType();
+    }
     SplitQualType SQT = T.split();
     QualType InnerTy = BaseClass::Visit(SQT.Ty);
     if (InnerTy.isNull())
@@ -6916,32 +6940,31 @@ public:
 
 class ConstructCountAttributedType :
   public ConstructDynamicBoundType<ConstructCountAttributedType> {
-  bool CountInBytes;
-  bool OrNull;
-
 public:
   explicit ConstructCountAttributedType(Sema &S, unsigned Level,
                                         const StringRef DiagName, Expr *ArgE,
                                         SourceLocation Loc, bool CountInBytes,
                                         bool OrNull, bool AllowRedecl,
                                         bool ScopeCheck = false)
-      : ConstructDynamicBoundType(S, Level, DiagName, ArgE, Loc, ScopeCheck,
-                                  AllowRedecl),
-        CountInBytes(CountInBytes), OrNull(OrNull) {
+      : ConstructDynamicBoundType(
+            S, Level, DiagName, ArgE, Loc,
+            Sema::BoundsAttrFlags{CountInBytes, OrNull, /*IsEndedBy=*/false},
+            ScopeCheck, AllowRedecl) {
     assert(ArgExpr->getType()->isIntegralOrEnumerationType() &&
            "pre-check should have rewritten non-integral count to literal 0");
   }
 
   QualType BuildDynamicBoundType(QualType CanonTy) {
-    assert((CountInBytes || !CanonTy->isPointerType() ||
+    assert((Flags.CountInBytes || !CanonTy->isPointerType() ||
             !(CanonTy->getPointeeType()->isAlwaysIncompleteType() ||
               CanonTy->getPointeeType()->isFunctionType() ||
               CanonTy->getPointeeType()->isSizelessType() ||
               CanonTy->getPointeeType()
                   ->isStructureTypeWithFlexibleArrayMember())) &&
            "pre-check should have flipped CountInBytes for bad pointee");
-    QualType Ty = S.BuildCountAttributedType(CanonTy, ArgExpr, CountInBytes,
-                                             OrNull, ScopeCheck);
+    QualType Ty = S.BuildCountAttributedType(CanonTy, ArgExpr,
+                                             Flags.CountInBytes, Flags.OrNull,
+                                             ScopeCheck);
     assert(ConstructedType == nullptr);
     ConstructedType = Ty->getAs<CountAttributedType>();
     return Ty;
@@ -6996,7 +7019,7 @@ public:
 
   QualType VisitIncompleteArrayType(const IncompleteArrayType *T) {
     if (Level == 0) {
-      assert(!CountInBytes &&
+      assert(!Flags.CountInBytes &&
              "pre-check should have rejected sized_by on incomplete array");
       return BuildDynamicBoundType(QualType(T, 0));
     }
@@ -7139,8 +7162,11 @@ public:
       Sema &S, unsigned Level, const StringRef DiagName, Expr *ArgExpr,
       SourceLocation Loc, bool AllowRedecl, bool ScopeCheck = false,
       std::optional<TypeCoupledDeclRefInfo> StartPtrInfo = std::nullopt)
-      : ConstructDynamicBoundType(S, Level, DiagName, ArgExpr, Loc, ScopeCheck,
-                                  AllowRedecl),
+      : ConstructDynamicBoundType(
+            S, Level, DiagName, ArgExpr, Loc,
+            Sema::BoundsAttrFlags{/*CountInBytes=*/false, /*OrNull=*/false,
+                                  /*IsEndedBy=*/true},
+            ScopeCheck, AllowRedecl),
         StartPtrInfo(StartPtrInfo) {
     assert(ArgExpr->getType()->isPointerType());
   }
@@ -7928,12 +7954,6 @@ void Sema::applyPtrCountedByEndedByAttr(Decl *D, unsigned Level,
       StartPtrInfo = TypeCoupledDeclRefInfo(Info.VD, /*Deref=*/Level != 0);
     }
 
-    LateBoundsAttrDiagContext DiagCtx{*this, DiagName, Loc,
-                                      Level, AttrArg,  Info.ScopeCheck};
-    if (!DiagCtx.diagnoseDynamicRangePointerTypeShape(
-            Info.DeclTy, /*AllowRedecl=*/OriginatesInAPINotes))
-      return;
-
     auto TypeConstructor = ConstructDynamicRangePointerType(
         *this, Level, DiagName, AttrArg, Loc, OriginatesInAPINotes,
         Info.ScopeCheck, StartPtrInfo);
@@ -7941,9 +7961,6 @@ void Sema::applyPtrCountedByEndedByAttr(Decl *D, unsigned Level,
     HadAtomicError = TypeConstructor.hadAtomicError();
     ConstructedType = TypeConstructor.getConstructedType();
   } else {
-    LateBoundsAttrDiagContext DiagCtx{*this, DiagName, Loc,
-                                      Level, AttrArg,  Info.ScopeCheck};
-
     if (!AttrArg->getType()->isIntegralOrEnumerationType()) {
       Diag(Loc, diag::err_attribute_argument_type_for_bounds_safety_count)
           << DiagName;
@@ -7951,15 +7968,7 @@ void Sema::applyPtrCountedByEndedByAttr(Decl *D, unsigned Level,
       // DefaultLvalueConversion and the count is itself a __counted_by value,
       // clang will go down a fiery stack overflow.
       AttrArg = ActOnIntegerConstant(AttrArg->getBeginLoc(), 0).get();
-
-      // Walker needs to see the rewritten version of AttrArg.
-      DiagCtx.AttrArg = AttrArg;
     }
-
-    if (!DiagCtx.diagnoseCountAttributedTypeShape(
-            Info.DeclTy, CountInBytes, OrNull,
-            /*AllowRedecl=*/OriginatesInAPINotes))
-      return;
 
     auto TypeConstructor = ConstructCountAttributedType(
         *this, Level, DiagName, AttrArg, Loc, CountInBytes, OrNull,

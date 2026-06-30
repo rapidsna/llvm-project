@@ -66,15 +66,14 @@ bool Sema::ValidateBoundsAttrTypeShape(QualType Ty, SourceLocation AttrLoc,
   // until they pass the new metadata through. Once every caller threads
   // DiagName, these checks become unconditional and the per-walker mirrors
   // in LateBoundsAttrDiagContext / ConstructXXXType disappear.
+  //
+  // The leaf operates on the type the visitor brought it (no internal sugar
+  // peel): the calling visitor's VisitAttributedType / VisitParenType /
+  // VisitMacroQualifiedType etc. already descend through transparent
+  // wrappers and re-invoke the leaf on the inner type at the same Level,
+  // so peeling here would double-count diagnostics. AutoPtrAttributed is
+  // tracked by the visitor and threaded in as a parameter.
   if (!DiagName.empty()) {
-    // Light sugar peel: AttributedType(PtrAutoAttr) marks an internally
-    // promoted pointer (e.g. __ptrauto); when present the upper-bound
-    // conflict is suppressed because the bound wasn't user-spelled.
-    while (const auto *AT = dyn_cast<AttributedType>(Ty.getTypePtr())) {
-      if (AT->getAttrKind() == attr::PtrAutoAttr)
-        AutoPtrAttributed = true;
-      Ty = AT->getModifiedType();
-    }
     const Type *T = Ty.getTypePtr();
 
     // VTT-wrong-pointer-type: counted_by/sized_by/ended_by cannot wrap a
@@ -230,8 +229,17 @@ bool Sema::ValidateBoundsAttrTypeShape(QualType Ty, SourceLocation AttrLoc,
     return false;
   }
 
-  // Arrays with sized_by or _or_null variants are not allowed.
-  if (Ty->isArrayType() && (Flags.CountInBytes || Flags.OrNull)) {
+  // Arrays with sized_by or _or_null variants are not allowed under the
+  // upstream (short-form) caller path: that emits a specific
+  // "did you mean to use 'counted_by'" hint, geared toward the FieldDecl
+  // path where the user got the spelling wrong. The consolidated path
+  // (DiagName set) treats incomplete-array + counted_by_or_null as a
+  // tentative-definition/FAM-like case that other code (e.g.
+  // err_bounds_safety_nullable_fam in applyPtrCountedByEndedByAttr) handles
+  // with more contextual diagnostics; the complete-array-with-count and
+  // sized_by-array checks above cover the other shapes.
+  if (DiagName.empty() && Ty->isArrayType() &&
+      (Flags.CountInBytes || Flags.OrNull)) {
     Diag(AttrLoc, diag::err_count_attr_not_on_ptr_or_flexible_array_member)
         << Kind << /*suggest counted_by*/ 1;
     return false;
