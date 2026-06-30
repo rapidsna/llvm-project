@@ -12315,7 +12315,8 @@ QualType Sema::BuildUnaryTransformType(QualType BaseType, UTTKind UKind,
              : Result;
 }
 
-QualType Sema::BuildAtomicType(QualType T, SourceLocation Loc) {
+QualType Sema::BuildAtomicType(QualType T, SourceLocation Loc,
+                               bool IsRebuild) {
   if (!isDependentOrGNUAutoType(T)) {
     // FIXME: It isn't entirely clear whether incomplete atomic types
     // are allowed or not; for simplicity, ban them for the moment.
@@ -12350,7 +12351,16 @@ QualType Sema::BuildAtomicType(QualType T, SourceLocation Loc) {
     }
 
     /* TO_UPSTREAM(BoundsSafety) ON*/
-    if (LangOpts.BoundsSafety) {
+    // On a TreeTransform rebuild (IsRebuild=true) the diagnostic was
+    // already emitted at the original construction site — either by the
+    // leaf in HandleCountedByAttrOnType / TransformLateParsedAttrType
+    // for the eager and late-parsing paths respectively, or by the
+    // BuildAtomicType call at the original construction. Skip the
+    // re-emission here so e.g. `int *_Atomic __counted_by(n) p;` (which
+    // triggers a TreeTransform rebuild via
+    // ProcessLateParsedTypeAttributesForVarOrTypedef) doesn't produce two
+    // copies of the same diagnostic at the same line.
+    if (LangOpts.BoundsSafety && !IsRebuild) {
       int DiagIndex = -1;
       if (const auto *CAT = T->getAs<CountAttributedType>()) {
         // Late-parsed bounds attributes (e.g. __counted_by) may already be

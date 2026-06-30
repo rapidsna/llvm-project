@@ -16020,7 +16020,20 @@ public:
 
   /// Build a paren type including \p T.
   QualType BuildParenType(QualType T);
-  QualType BuildAtomicType(QualType T, SourceLocation Loc);
+  /// Build an `_Atomic(T)` type. Emits diagnostics for ill-formed atomic
+  /// types (e.g. atomic-of-array) and, under `-fbounds-safety`, a
+  /// follow-up `err_bounds_safety_atomic_unsupported_attribute` when T is
+  /// a bounds-attributed pointer.
+  ///
+  /// \p IsRebuild signals that this call is coming from a TreeTransform
+  /// re-walking an already-constructed type (e.g.
+  /// `ProcessLateParsedTypeAttributesForVarOrTypedef`'s rebuild pass for
+  /// function-pointer-typedef cases). On a rebuild the bounds-safety
+  /// diagnostic was already emitted at the original construction site, so
+  /// we suppress the re-emission here. Defaulted false to keep existing
+  /// (non-rebuild) callers unchanged.
+  QualType BuildAtomicType(QualType T, SourceLocation Loc,
+                           bool IsRebuild = false);
 
   /// Build a Read-only Pipe type.
   ///

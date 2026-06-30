@@ -21194,6 +21194,24 @@ struct RebuildTypeWithLateParsedAttr
                                 Sema::ParseLateParsedTypeAttributeCB *ParseCB)
       : TreeTransform(SemaRef), VD(VD), ParseCallback(ParseCB) {}
 
+  // The bounds-safety err_bounds_safety_atomic_unsupported_attribute
+  // diagnostic in Sema::BuildAtomicType was already emitted at the
+  // original construction site (the leaf in HandleCountedByAttrOnType /
+  // TransformLateParsedAttrType, or the BuildAtomicType call from the
+  // `_Atomic(T)` type-spec path). On this rebuild walk the type already
+  // exists, so the inner T can be a CountAttributedType /
+  // DynamicRangePointerType / ValueTerminatedType — re-running the
+  // bounds-safety branch here would emit a second copy of the same
+  // diagnostic for cases like `int *_Atomic __counted_by(n) p;` (which
+  // reaches this rebuild via
+  // ProcessLateParsedTypeAttributesForVarOrTypedef even though it has
+  // no LateParsedAttrType placeholders). Pass IsRebuild=true to suppress
+  // the bounds-safety re-emission while keeping the upstream
+  // ill-formed-atomic diagnostics intact.
+  QualType RebuildAtomicType(QualType ValueType, SourceLocation KWLoc) {
+    return SemaRef.BuildAtomicType(ValueType, KWLoc, /*IsRebuild=*/true);
+  }
+
   Decl *getTransformedDecl(Decl *Old) const {
     auto It = TransformedLocalDecls.find(Old);
     return It != TransformedLocalDecls.end() ? It->second : nullptr;
