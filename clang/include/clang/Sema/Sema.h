@@ -16142,6 +16142,23 @@ public:
 
   static LifetimeCheckKind getLifetimeCheckKind(const VarDecl *VD);
 
+  /// Post-build decl-context validation for a bounds-attributed declaration.
+  /// Mirrors what applyPtrCountedByEndedByAttr does after
+  /// ConstructXXXType.Visit returns: runs lifetime/scope check on the
+  /// BoundsAttributedType, and — if that succeeds — the dep-decls-kind
+  /// check appropriate for the BAT variant (CountAttributedType goes
+  /// through diagnoseCountDependentDecls; DynamicRangePointerType goes
+  /// through diagnoseRangeDependentDecls). Callers that want the "attach
+  /// DependerDeclsAttr on success" pattern check the return value and do
+  /// the attach outside; the leaf is diagnostic-only.
+  ///
+  /// Returns true if a diagnostic was emitted.
+  bool ValidateBoundsAttrDeclContext(const NamedDecl *D,
+                                     const BoundsAttributedType *BAT,
+                                     unsigned Level, bool IsFPtr,
+                                     bool ScopeCheck,
+                                     LifetimeCheckKind LifetimeCheck);
+
   /// Attach \c DependerDeclsAttr to declarations referred to by \c counted_by
   /// or \c sized_by attributes. This doesn't apply to \c ended_by because it
   /// adds a type sugar (i.e., \c DynamicRangePointerType) instead for its

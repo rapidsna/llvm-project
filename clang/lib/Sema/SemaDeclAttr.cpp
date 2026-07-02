@@ -7442,6 +7442,31 @@ diagnoseRangeDependentDecls(Sema &S, const ValueDecl *TheDepender,
   return HadError;
 }
 
+bool Sema::ValidateBoundsAttrDeclContext(const NamedDecl *D,
+                                         const BoundsAttributedType *BAT,
+                                         unsigned Level, bool IsFPtr,
+                                         bool ScopeCheck,
+                                         LifetimeCheckKind LifetimeCheck) {
+  // Lifetime/scope check on all dependees first. Mirrors the eager path's
+  // ordering in applyPtrCountedByEndedByAttr, which returns early on
+  // lifetime/scope error so the follow-up dep-decls-kind check + attach are
+  // skipped for an already-invalid decl.
+  if (diagnoseBoundsAttrLifetimeAndScope(*this, BAT, ScopeCheck, LifetimeCheck))
+    return true;
+
+  // Dep-decls-kind check discriminated on the BAT variant: CAT dependees
+  // must be FieldDecl (or IndirectFieldDecl of the same parent) or
+  // ParmVarDecl depending on the depender kind; DRPT endptr_decls have
+  // parallel constraints for range attributes.
+  if (const auto *CAT = dyn_cast<CountAttributedType>(BAT))
+    return diagnoseCountDependentDecls(*this, cast<ValueDecl>(D), CAT, Level,
+                                       IsFPtr);
+  if (const auto *DRPT = dyn_cast<DynamicRangePointerType>(BAT))
+    return diagnoseRangeDependentDecls(*this, cast<ValueDecl>(D), DRPT, Level,
+                                       IsFPtr);
+  return false;
+}
+
 namespace {
 class DynamicBoundsAttrInfo {
 public:
