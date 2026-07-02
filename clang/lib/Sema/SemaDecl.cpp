@@ -21201,6 +21201,17 @@ struct RebuildTypeWithLateParsedAttr
   // SemaDeclAttr.cpp:7820.
   bool IsInsideFunctionType = false;
 
+  // Depth of outer PointerType / ArrayType wrappers between the walker's
+  // root type and the current transform site. Incremented via
+  // SaveAndRestore in each outer-wrapper transform before recursing into
+  // the pointee/element type. Threaded to ValidateBoundsAttrTypeShape's
+  // `Level` parameter so the leaf's Ext 2 fires
+  // err_bounds_safety_nested_dynamic_bound when a LateParsedAttrType
+  // placeholder resolves inside an outer wrapper (unless it's the valid
+  // indirect-parameter pattern — see IsIndirectParamContext computation
+  // in TransformLateParsedAttrType).
+  unsigned CurLevel = 0;
+
   RebuildTypeWithLateParsedAttr(Sema &SemaRef, NamedDecl *VD,
                                 Sema::ParseLateParsedTypeAttributeCB *ParseCB)
       : TreeTransform(SemaRef), VD(VD), ParseCallback(ParseCB) {}
@@ -21231,41 +21242,12 @@ struct RebuildTypeWithLateParsedAttr
   // TODO: Move this diagnostics outside this. That will help remove
   // custom many Transform*Type, like TransformDependentSizedArrayType.
 
-  // Helper to check and diagnose if a type is CountAttributedType.
-  // Mirrors applyPtrCountedByEndedByAttr's discrimination (SemaDeclAttr.cpp):
-  //   - Non-parameter (field/var): always error with the "indirect parameters"
-  //     wording (it's documented to mean "this construct is only allowed on
-  //     indirect parameters", i.e., disallowed here).
-  //   - Parameter + outer is bounds-attributed: error with the same wording.
-  //   - Parameter + outer is plain: VALID (indirect parameter pattern),
-  //     suppress.
-  // IsInsideBoundsAttrTransform tracks whether we're inside a CAT/DRPT
-  // transform call (i.e., our outer is bounds-attributed).
-  bool diagnoseCountAttributedType(QualType Ty, SourceLocation Loc) {
-    if (const auto *CAT = Ty->getAs<CountAttributedType>()) {
-      // Indirect parameter (outer pointer has no bounds attr) is allowed.
-      if (isa<FunctionDecl>(VD) && !IsInsideBoundsAttrTransform)
-        return false;
-      // %0 is a single-quoted spelling of the attribute name.
-      static constexpr const char *KindSpelling[] = {
-          "'__counted_by'", "'__sized_by'", "'__counted_by_or_null'",
-          "'__sized_by_or_null'", "'__ended_by'"};
-      SemaRef.Diag(Loc, diag::err_bounds_safety_nested_dynamic_bound)
-          << KindSpelling[CAT->getKind()];
-      VD->setInvalidDecl();
-      return true;
-    }
-    if (Ty->getAs<DynamicRangePointerType>()) {
-      // Same indirect-parameter exception as for CAT.
-      if (isa<FunctionDecl>(VD) && !IsInsideBoundsAttrTransform)
-        return false;
-      SemaRef.Diag(Loc, diag::err_bounds_safety_nested_dynamic_bound)
-          << "'__ended_by'";
-      VD->setInvalidDecl();
-      return true;
-    }
-    return false;
-  }
+  // The nested-dynamic-bound diagnostic
+  // (err_bounds_safety_nested_dynamic_bound) is now emitted by
+  // ValidateBoundsAttrTypeShape's Ext 2, driven by the CurLevel counter this
+  // walker maintains as it descends through outer PointerType/ArrayType
+  // wrappers, plus the IsIndirectParamContext computed inside
+  // TransformLateParsedAttrType.
 
   QualType TransformLateParsedAttrType(TypeLocBuilder &TLB,
                                        LateParsedAttrTypeLoc TL) {
@@ -21342,11 +21324,20 @@ struct RebuildTypeWithLateParsedAttr
     const IdentifierInfo *AttrName =
         AL.printMacroName() ? AL.getMacroIdentifier() : AL.getAttrName();
     std::string DiagName = ("'" + AttrName->getName() + "'").str();
+    // IsIndirectParamContext: on the late path, we're inside a function
+    // declarator when VD is a FunctionDecl (the transform is walking the
+    // function's own type — parameters and return type). The valid
+    // indirect-parameter pattern is: parameter position + outer pointer
+    // is NOT itself bounds-attributed (tracked by
+    // IsInsideBoundsAttrTransform). Mirrors the eager path's
+    // `isa<ParmVarDecl>(D) && !Info.DeclTy->isBoundsAttributedType()`.
+    bool IsIndirectParamContext =
+        isa<FunctionDecl>(VD) && !IsInsideBoundsAttrTransform;
     if (!SemaRef.ValidateBoundsAttrTypeShape(
             InnerType, AL.getLoc(), AL.getRange(), Flags, DiagName,
             /*AllowRedecl=*/false,
             /*AutoPtrAttributed=*/InnerType->hasAttr(attr::PtrAutoAttr),
-            AttrArg)) {
+            AttrArg, CurLevel, IsIndirectParamContext)) {
       AL.setInvalid();
       VD->setInvalidDecl();
       return InnerType;
@@ -21470,6 +21461,15 @@ struct RebuildTypeWithLateParsedAttr
                      SemaRef.getDiagnostics());
     llvm::SaveAndRestore<Scope *> SavedScope(SemaRef.CurScope, &ProtoScope);
     llvm::SaveAndRestore<bool> SavedInFn(IsInsideFunctionType, true);
+    // Reset CurLevel when descending into a function type. The nested-
+    // dynamic-bound check counts levels within the current return type
+    // (mirroring DynamicBoundsAttrInfo::EffectiveLevel's IsFPtr handling
+    // at SemaDeclAttr.cpp:7552 which sets EffectiveLevel = Level - i - 1
+    // after crossing a function pointer). Without this reset, a valid
+    // `int **__counted_by(len) (*fptr)(int)` (CAT at Level 0 within the
+    // return type) would be misdiagnosed as nested because the outer
+    // fptr's PointerType wrapper already incremented CurLevel.
+    llvm::SaveAndRestore<unsigned> SavedLevel(CurLevel, 0);
 
     for (unsigned i = 0, e = TL.getNumParams(); i != e; ++i)
       if (auto *PD = TL.getParam(i))
@@ -21495,6 +21495,9 @@ struct RebuildTypeWithLateParsedAttr
                      SemaRef.getDiagnostics());
     llvm::SaveAndRestore<Scope *> SavedScope(SemaRef.CurScope, &ProtoScope);
     llvm::SaveAndRestore<bool> SavedInFn(IsInsideFunctionType, true);
+    // Reset CurLevel when descending into a function type; see the
+    // corresponding SaveAndRestore in TransformFunctionProtoType above.
+    llvm::SaveAndRestore<unsigned> SavedLevel(CurLevel, 0);
 
     QualType Result = BaseTransform::TransformFunctionNoProtoType(TLB, TL);
 
@@ -21503,7 +21506,11 @@ struct RebuildTypeWithLateParsedAttr
   }
 
   QualType TransformPointerType(TypeLocBuilder &TLB, PointerTypeLoc TL) {
-    QualType PointeeType = getDerived().TransformType(TLB, TL.getPointeeLoc());
+    QualType PointeeType;
+    {
+      llvm::SaveAndRestore<unsigned> SAR(CurLevel, CurLevel + 1);
+      PointeeType = getDerived().TransformType(TLB, TL.getPointeeLoc());
+    }
     if (PointeeType.isNull()) {
       VD->setInvalidDecl();
       return QualType();
@@ -21529,10 +21536,10 @@ struct RebuildTypeWithLateParsedAttr
       }
     }
 
-    // Diagnose nested pointer with counted_by attribute
-    // e.g., int * __counted_by(n) *ptr;
-    if (diagnoseCountAttributedType(PointeeType, TL.getSigilLoc()))
-      return QualType();
+    // Nested-CAT/DRPT at the pointee position is now diagnosed by
+    // ValidateBoundsAttrTypeShape's Ext 2 (fires from the inner
+    // TransformLateParsedAttrType with CurLevel > 0 in a non-indirect-param
+    // context). No inline post-inner-transform check needed here.
 
     QualType Result = TL.getType();
     if (getDerived().AlwaysRebuild() ||
@@ -21553,7 +21560,11 @@ struct RebuildTypeWithLateParsedAttr
   QualType TransformConstantArrayType(TypeLocBuilder &TLB,
                                       ConstantArrayTypeLoc TL) {
     const ConstantArrayType *T = TL.getTypePtr();
-    QualType ElementType = getDerived().TransformType(TLB, TL.getElementLoc());
+    QualType ElementType;
+    {
+      llvm::SaveAndRestore<unsigned> SAR(CurLevel, CurLevel + 1);
+      ElementType = getDerived().TransformType(TLB, TL.getElementLoc());
+    }
     if (ElementType.isNull()) {
       VD->setInvalidDecl();
       return QualType();
@@ -21561,8 +21572,8 @@ struct RebuildTypeWithLateParsedAttr
 
     // Diagnose array with element type having counted_by attribute
     // e.g., int * __counted_by(n) arr[10];
-    if (diagnoseCountAttributedType(ElementType, TL.getLBracketLoc()))
-      return QualType();
+    // Handled by ValidateBoundsAttrTypeShape's Ext 2 (fires from the inner
+    // TransformLateParsedAttrType with CurLevel > 0). No inline check.
 
     // Continue with normal array transformation
     Expr *OldSize = TL.getSizeExpr();
@@ -21599,7 +21610,11 @@ struct RebuildTypeWithLateParsedAttr
   QualType TransformIncompleteArrayType(TypeLocBuilder &TLB,
                                         IncompleteArrayTypeLoc TL) {
     const IncompleteArrayType *T = TL.getTypePtr();
-    QualType ElementType = getDerived().TransformType(TLB, TL.getElementLoc());
+    QualType ElementType;
+    {
+      llvm::SaveAndRestore<unsigned> SAR(CurLevel, CurLevel + 1);
+      ElementType = getDerived().TransformType(TLB, TL.getElementLoc());
+    }
     if (ElementType.isNull()) {
       VD->setInvalidDecl();
       return QualType();
@@ -21607,8 +21622,7 @@ struct RebuildTypeWithLateParsedAttr
 
     // Diagnose flexible array member with element type having counted_by
     // attribute e.g., int * __counted_by(n) arr[];
-    if (diagnoseCountAttributedType(ElementType, TL.getLBracketLoc()))
-      return QualType();
+    // Handled by ValidateBoundsAttrTypeShape's Ext 2.
 
     QualType Result = TL.getType();
     if (getDerived().AlwaysRebuild() || ElementType != T->getElementType()) {
@@ -21632,7 +21646,11 @@ struct RebuildTypeWithLateParsedAttr
   QualType TransformVariableArrayType(TypeLocBuilder &TLB,
                                       VariableArrayTypeLoc TL) {
     const VariableArrayType *T = TL.getTypePtr();
-    QualType ElementType = getDerived().TransformType(TLB, TL.getElementLoc());
+    QualType ElementType;
+    {
+      llvm::SaveAndRestore<unsigned> SAR(CurLevel, CurLevel + 1);
+      ElementType = getDerived().TransformType(TLB, TL.getElementLoc());
+    }
     if (ElementType.isNull()) {
       VD->setInvalidDecl();
       return QualType();
@@ -21640,8 +21658,7 @@ struct RebuildTypeWithLateParsedAttr
 
     // Diagnose VLA with element type having counted_by attribute
     // e.g., int * __counted_by(n) arr[m];
-    if (diagnoseCountAttributedType(ElementType, TL.getLBracketLoc()))
-      return QualType();
+    // Handled by ValidateBoundsAttrTypeShape's Ext 2.
 
     // Transform the size expression
     ExprResult SizeResult = getDerived().TransformExpr(T->getSizeExpr());
@@ -21674,7 +21691,11 @@ struct RebuildTypeWithLateParsedAttr
   QualType TransformDependentSizedArrayType(TypeLocBuilder &TLB,
                                             DependentSizedArrayTypeLoc TL) {
     const DependentSizedArrayType *T = TL.getTypePtr();
-    QualType ElementType = getDerived().TransformType(TLB, TL.getElementLoc());
+    QualType ElementType;
+    {
+      llvm::SaveAndRestore<unsigned> SAR(CurLevel, CurLevel + 1);
+      ElementType = getDerived().TransformType(TLB, TL.getElementLoc());
+    }
     if (ElementType.isNull()) {
       VD->setInvalidDecl();
       return QualType();
@@ -21683,8 +21704,7 @@ struct RebuildTypeWithLateParsedAttr
     // Diagnose dependent-sized array with element type having counted_by
     // attribute e.g., template<int N> struct S { int * __counted_by(n) arr[N];
     // };
-    if (diagnoseCountAttributedType(ElementType, TL.getLBracketLoc()))
-      return QualType();
+    // Handled by ValidateBoundsAttrTypeShape's Ext 2.
 
     // Transform the size expression
     EnterExpressionEvaluationContext Unevaluated(

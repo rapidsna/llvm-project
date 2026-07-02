@@ -76,6 +76,28 @@ bool Sema::ValidateBoundsAttrTypeShape(QualType Ty, SourceLocation AttrLoc,
   // so peeling here would double-count diagnostics. AutoPtrAttributed is
   // tracked by the visitor and threaded in as a parameter.
   if (!DiagName.empty()) {
+    const Type *T = Ty.getTypePtr();
+
+    // Atomic wrapping a pointer takes priority over nested-dynamic-bound
+    // detection: when both apply (e.g. `int *_Atomic __counted_by(n) *p`
+    // as a local var, where Ty = Atomic(int*) and Level = 1), tests pin the
+    // atomic-specific spelling. The atomic branch below returns `true` so
+    // the caller can continue constructing (or bail on its own terms).
+    if (const auto *ATy = dyn_cast<AtomicType>(T);
+        ATy && ATy->getValueType()->isPointerType()) {
+      if (Flags.IsEndedBy) {
+        Diag(AttrLoc, diag::err_bounds_safety_atomic_unsupported_attribute)
+            << /*ended_by*/ 6;
+      } else {
+        unsigned DiagIndex = Flags.CountInBytes ? 3 : 2;
+        if (Flags.OrNull)
+          DiagIndex += 2;
+        Diag(AttrLoc, diag::err_bounds_safety_atomic_unsupported_attribute)
+            << DiagIndex;
+      }
+      return true;
+    }
+
     // Nested-dynamic-bound: the attribute is being applied at a nested
     // position (Level != 0). The eager path's applyPtrCountedByEndedByAttr
     // rejects Level != 0 unconditionally for non-parameters and rejects it
@@ -86,8 +108,6 @@ bool Sema::ValidateBoundsAttrTypeShape(QualType Ty, SourceLocation AttrLoc,
       Diag(AttrLoc, diag::err_bounds_safety_nested_dynamic_bound) << DiagName;
       return false;
     }
-
-    const Type *T = Ty.getTypePtr();
 
     // VTT-wrong-pointer-type: counted_by/sized_by/ended_by cannot wrap a
     // __terminated_by pointer (unless the terminator was auto-inferred).
@@ -170,24 +190,9 @@ bool Sema::ValidateBoundsAttrTypeShape(QualType Ty, SourceLocation AttrLoc,
       }
     }
 
-    // Atomic wrapping a pointer: emit but allow construction. Mirrors the
-    // existing ConstructXXXType behavior so the AtomicType is still built
-    // and follow-up atomic-specific diagnostics don't double-fire.
-    if (const auto *ATy = dyn_cast<AtomicType>(T)) {
-      if (ATy->getValueType()->isPointerType()) {
-        if (Flags.IsEndedBy) {
-          Diag(AttrLoc, diag::err_bounds_safety_atomic_unsupported_attribute)
-              << /*ended_by*/ 6;
-        } else {
-          unsigned DiagIndex = Flags.CountInBytes ? 3 : 2;
-          if (Flags.OrNull)
-            DiagIndex += 2;
-          Diag(AttrLoc, diag::err_bounds_safety_atomic_unsupported_attribute)
-              << DiagIndex;
-        }
-        return true;
-      }
-    }
+    // (Atomic-wrapping-pointer is diagnosed earlier at the top of this
+    // DiagName block, before Ext 2, so tests get the atomic-specific
+    // spelling when both nested and atomic contexts apply.)
 
     // Pointer with explicit upper-bound (__bidi_indexable / __indexable):
     // conflict with count/end attributes.
