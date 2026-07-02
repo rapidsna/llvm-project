@@ -9108,13 +9108,14 @@ NamedDecl *Sema::ActOnVariableDeclarator(
     // error matches the non-late path's early-return semantics so DCPAA
     // doesn't pick up an invalid dependee and emit "variable cannot be
     // used in other dynamic bounds attributes" follow-ups.
-    bool HadAttrError =
-        diagnoseLateParseBoundsAttrLifetimeAndScope(NewVD);
-    if (const auto *CATy = NewVD->getType()->getAs<CountAttributedType>()) {
-      if (!HadAttrError &&
-          !diagnoseLateParseCountDependentDecls(NewVD, CATy, /*Level=*/0,
-                                                /*IsFPtr=*/false))
-        AttachDependerDeclsAttr(NewVD, CATy, /*Level=*/0);
+    if (const auto *BAT = NewVD->getType()->getAs<BoundsAttributedType>()) {
+      bool HadAttrError = ValidateBoundsAttrDeclContext(
+          NewVD, BAT, /*Level=*/0, /*IsFPtr=*/false,
+          /*ScopeCheck=*/NewVD->isLocalVarDecl(),
+          Sema::getLifetimeCheckKind(NewVD));
+      if (!HadAttrError)
+        if (const auto *CATy = dyn_cast<CountAttributedType>(BAT))
+          AttachDependerDeclsAttr(NewVD, CATy, /*Level=*/0);
     }
     // For globals/locals with `__ended_by`, wrap the end-pointer's type
     // with started_by info. The non-late path runs this via
