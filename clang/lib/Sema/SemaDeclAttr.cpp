@@ -6435,19 +6435,32 @@ protected:
   Sema::BoundsAttrFlags Flags;
   const BoundsAttributedType *ConstructedType = nullptr;
   unsigned Level;
+  // Preserves the initial nesting depth for the leaf's Ext 2 check
+  // (err_bounds_safety_nested_dynamic_bound). `Level` itself decrements
+  // as the walker descends through outer PointerTypes, so by the time
+  // the leaf fires at Level == 0 the original nesting is lost.
+  unsigned OriginalLevel;
   bool ScopeCheck;
   bool AllowRedecl;
   bool AutoPtrAttributed = false;
   bool AtomicErrorEmitted = false;
+  // Whether the surrounding Decl context is a parameter whose outer
+  // pointer is plain (not itself bounds-attributed) — the valid
+  // "indirect parameter" pattern. Threaded to the leaf's Ext 2 so
+  // Level != 0 in that context is not diagnosed.
+  bool IsIndirectParamContext;
 
 public:
   explicit ConstructDynamicBoundType(Sema &S, unsigned Level,
                                      const StringRef DiagName, Expr *ArgExpr,
                                      SourceLocation Loc,
                                      Sema::BoundsAttrFlags Flags,
-                                     bool ScopeCheck, bool AllowRedecl)
+                                     bool ScopeCheck, bool AllowRedecl,
+                                     bool IsIndirectParamContext = false)
       : S(S), DiagName(DiagName), ArgExpr(ArgExpr), Loc(Loc), Flags(Flags),
-        Level(Level), ScopeCheck(ScopeCheck), AllowRedecl(AllowRedecl) {}
+        Level(Level), OriginalLevel(Level), ScopeCheck(ScopeCheck),
+        AllowRedecl(AllowRedecl),
+        IsIndirectParamContext(IsIndirectParamContext) {}
 
   QualType Visit(QualType T) {
     // Run the consolidated leaf check at the level the attr is being applied.
@@ -6469,7 +6482,8 @@ public:
         !isa<AttributedType>(T.getTypePtr()) &&
         !S.ValidateBoundsAttrTypeShape(T, Loc, SourceRange(Loc), Flags,
                                        DiagName, AllowRedecl, AutoPtrAttributed,
-                                       ArgExpr)) {
+                                       ArgExpr, OriginalLevel,
+                                       IsIndirectParamContext)) {
       return QualType();
     }
     SplitQualType SQT = T.split();
@@ -6641,11 +6655,12 @@ public:
                                         const StringRef DiagName, Expr *ArgE,
                                         SourceLocation Loc, bool CountInBytes,
                                         bool OrNull, bool AllowRedecl,
-                                        bool ScopeCheck = false)
+                                        bool ScopeCheck = false,
+                                        bool IsIndirectParamContext = false)
       : ConstructDynamicBoundType(
             S, Level, DiagName, ArgE, Loc,
             Sema::BoundsAttrFlags{CountInBytes, OrNull, /*IsEndedBy=*/false},
-            ScopeCheck, AllowRedecl) {
+            ScopeCheck, AllowRedecl, IsIndirectParamContext) {
     assert(ArgExpr->getType()->isIntegralOrEnumerationType() &&
            "pre-check should have rewritten non-integral count to literal 0");
   }
@@ -6857,12 +6872,13 @@ public:
   explicit ConstructDynamicRangePointerType(
       Sema &S, unsigned Level, const StringRef DiagName, Expr *ArgExpr,
       SourceLocation Loc, bool AllowRedecl, bool ScopeCheck = false,
-      std::optional<TypeCoupledDeclRefInfo> StartPtrInfo = std::nullopt)
+      std::optional<TypeCoupledDeclRefInfo> StartPtrInfo = std::nullopt,
+      bool IsIndirectParamContext = false)
       : ConstructDynamicBoundType(
             S, Level, DiagName, ArgExpr, Loc,
             Sema::BoundsAttrFlags{/*CountInBytes=*/false, /*OrNull=*/false,
                                   /*IsEndedBy=*/true},
-            ScopeCheck, AllowRedecl),
+            ScopeCheck, AllowRedecl, IsIndirectParamContext),
         StartPtrInfo(StartPtrInfo) {
     assert(ArgExpr->getType()->isPointerType());
   }
@@ -7621,11 +7637,12 @@ void Sema::applyPtrCountedByEndedByAttr(Decl *D, unsigned Level,
     return;
   }
 
-  if (Info.EffectiveLevel != 0 &&
-      (!isa<ParmVarDecl>(D) || Info.DeclTy->isBoundsAttributedType())) {
-    Diag(Loc, diag::err_bounds_safety_nested_dynamic_bound) << DiagName;
-    return;
-  }
+  // Nested-dynamic-bound (Level != 0 in a non-indirect-param context) is now
+  // diagnosed by ValidateBoundsAttrTypeShape's Ext 2, threaded via the
+  // ConstructDynamicBoundType walker's IsIndirectParamContext field. The
+  // eager path just computes the discriminator and lets the leaf fire.
+  bool IsIndirectParamContext =
+      isa<ParmVarDecl>(D) && !Info.DeclTy->isBoundsAttributedType();
 
   // Clang causes array parameters to decay to pointers so quickly that
   // attributes aren't even parsed yet. This causes arrays with both an
@@ -7707,7 +7724,7 @@ void Sema::applyPtrCountedByEndedByAttr(Decl *D, unsigned Level,
 
     auto TypeConstructor = ConstructDynamicRangePointerType(
         *this, Level, DiagName, AttrArg, Loc, OriginatesInAPINotes,
-        Info.ScopeCheck, StartPtrInfo);
+        Info.ScopeCheck, StartPtrInfo, IsIndirectParamContext);
     NewDeclTy = TypeConstructor.Visit(Info.DeclTy);
     HadAtomicError = TypeConstructor.hadAtomicError();
     ConstructedType = TypeConstructor.getConstructedType();
@@ -7723,7 +7740,7 @@ void Sema::applyPtrCountedByEndedByAttr(Decl *D, unsigned Level,
 
     auto TypeConstructor = ConstructCountAttributedType(
         *this, Level, DiagName, AttrArg, Loc, CountInBytes, OrNull,
-        OriginatesInAPINotes, Info.ScopeCheck);
+        OriginatesInAPINotes, Info.ScopeCheck, IsIndirectParamContext);
     NewDeclTy = TypeConstructor.Visit(Info.DeclTy);
     HadAtomicError = TypeConstructor.hadAtomicError();
     ConstructedType = TypeConstructor.getConstructedType();
