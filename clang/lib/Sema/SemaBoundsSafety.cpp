@@ -247,6 +247,20 @@ bool Sema::ValidateBoundsAttrTypeShape(QualType Ty, SourceLocation AttrLoc,
     return true;
   }
 
+  // Non-integer count-arg: for the counted_by/sized_by family (non-IsEndedBy),
+  // the count expression must have an integer or enumeration type. Mirrors
+  // the eager-path pre-emptive check in applyPtrCountedByEndedByAttr
+  // (SemaDeclAttr.cpp) and the late-path inline mirror that used to live in
+  // TransformLateParsedAttrType. Gated on non-empty DiagName (consolidated
+  // caller) and on AttrArg being non-null (short-form callers pass nullptr).
+  if (!DiagName.empty() && AttrArg &&
+      !AttrArg->getType()->isIntegralOrEnumerationType()) {
+    Diag(AttrArg->getBeginLoc(),
+         diag::err_attribute_argument_type_for_bounds_safety_count)
+        << DiagName << AttrArg->getSourceRange();
+    return false;
+  }
+
   // counted_by/sized_by: must be pointer or array.
   if (!Ty->isPointerType() && !Ty->isArrayType()) {
     Diag(AttrLoc, diag::err_count_attr_not_on_ptr_or_flexible_array_member)

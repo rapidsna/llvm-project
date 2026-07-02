@@ -21367,33 +21367,10 @@ struct RebuildTypeWithLateParsedAttr
       return InnerType;
     }
 
-    // Mirror applyPtrCountedByEndedByAttr (SemaDeclAttr.cpp:8001-8011): if
-    // the count expression has a non-integer type (e.g. a call to a const
-    // function returning `void`), emit the integer-type diagnostic BEFORE
-    // BuildCountAttributedType runs CountArgChecker on the call. Otherwise
-    // CountArgChecker emits a spurious "can only reference function with
-    // 'const' attribute" diagnostic for the wrong root cause. Bail out
-    // (don't build the CAT) so downstream validators don't double-report.
-    if (!Flags.IsEndedBy) {
-      if (AttrArg) {
-        QualType ArgTy = AttrArg->getType();
-        if (!ArgTy.isNull() &&
-            !ArgTy->isIntegralOrEnumerationType()) {
-          static constexpr const char *KindSpelling[] = {
-              "'__counted_by'", "'__sized_by'",
-              "'__counted_by_or_null'", "'__sized_by_or_null'"};
-          unsigned Kind = static_cast<unsigned>(Flags.OrNull) << 1 |
-                          static_cast<unsigned>(Flags.CountInBytes);
-          SemaRef.Diag(
-              AttrArg->getBeginLoc(),
-              diag::err_attribute_argument_type_for_bounds_safety_count)
-              << KindSpelling[Kind] << AttrArg->getSourceRange();
-          AL.setInvalid();
-          VD->setInvalidDecl();
-          return InnerType;
-        }
-      }
-    }
+    // Non-integer count-arg is now diagnosed by ValidateBoundsAttrTypeShape
+    // above (see the AttrArg-integer check inside the leaf). Reaching here
+    // means the leaf accepted the shape; no further count-arg pre-check is
+    // needed before BuildBoundsAttrType.
 
     QualType T = BuildBoundsAttrType(SemaRef, InnerType, VD, AL);
 
