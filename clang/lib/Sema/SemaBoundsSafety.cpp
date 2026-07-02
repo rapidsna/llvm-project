@@ -60,7 +60,9 @@ bool Sema::ValidateBoundsAttrTypeShape(QualType Ty, SourceLocation AttrLoc,
                                        SourceRange AttrRange,
                                        BoundsAttrFlags &Flags,
                                        StringRef DiagName, bool AllowRedecl,
-                                       bool AutoPtrAttributed, Expr *AttrArg) {
+                                       bool AutoPtrAttributed, Expr *AttrArg,
+                                       unsigned Level,
+                                       bool IsIndirectParamContext) {
   // Consolidated per-type-kind conflict checks. Opt-in via a non-empty
   // DiagName so existing short-form callers preserve their current behavior
   // until they pass the new metadata through. Once every caller threads
@@ -74,6 +76,17 @@ bool Sema::ValidateBoundsAttrTypeShape(QualType Ty, SourceLocation AttrLoc,
   // so peeling here would double-count diagnostics. AutoPtrAttributed is
   // tracked by the visitor and threaded in as a parameter.
   if (!DiagName.empty()) {
+    // Nested-dynamic-bound: the attribute is being applied at a nested
+    // position (Level != 0). The eager path's applyPtrCountedByEndedByAttr
+    // rejects Level != 0 unconditionally for non-parameters and rejects it
+    // for parameters only when the outer type is itself bounds-attributed
+    // (i.e. NOT an indirect-parameter pattern). Callers pass the
+    // discriminator via IsIndirectParamContext.
+    if (Level != 0 && !IsIndirectParamContext) {
+      Diag(AttrLoc, diag::err_bounds_safety_nested_dynamic_bound) << DiagName;
+      return false;
+    }
+
     const Type *T = Ty.getTypePtr();
 
     // VTT-wrong-pointer-type: counted_by/sized_by/ended_by cannot wrap a

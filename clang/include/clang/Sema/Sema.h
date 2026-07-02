@@ -3004,7 +3004,9 @@ public:
                                    StringRef DiagName = {},
                                    bool AllowRedecl = false,
                                    bool AutoPtrAttributed = false,
-                                   Expr *AttrArg = nullptr);
+                                   Expr *AttrArg = nullptr,
+                                   unsigned Level = 0,
+                                   bool IsIndirectParamContext = false);
 
   /* TO_UPSTREAM(BoundsSafety) OFF*/
 
