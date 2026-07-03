@@ -22008,8 +22008,22 @@ void Sema::ProcessLateParsedTypeAttributesForParameters(
             Deref = 1;
         }
         if (CATy) {
-          if (!diagnoseLateParseCountDependentDecls(
-                  PD, CATy, /*Level=*/Deref, /*IsFPtr=*/false))
+          // Delegate to the consolidated decl-context leaf. For a
+          // parameter:
+          //   - ScopeCheck=false — parameters share the enclosing
+          //     function's scope; dependee validity is enforced by
+          //     dep-decls-kind (must be a sibling ParmVarDecl).
+          //   - LifetimeCheck=None — parameters have the function's
+          //     lifetime; no cross-lifetime comparison applies.
+          //   - IsFPtr=false — this is the function's own parameter, not
+          //     a fptr-return-count position.
+          //   - Level=Deref — matches the eager path's
+          //     Info.EffectiveLevel for out-pointer patterns.
+          //   - RunDependentDeclsKindCheck=true.
+          if (!ValidateBoundsAttrDeclContext(
+                  PD, CATy, /*Level=*/Deref, /*IsFPtr=*/false,
+                  /*ScopeCheck=*/false, Sema::LifetimeCheckKind::None,
+                  /*RunDependentDeclsKindCheck=*/true))
             AttachDependerDeclsAttr(PD, CATy, /*Level=*/Deref);
           // Mirror applyPtrCountedByEndedByAttr (SemaDeclAttr.cpp:7855-7886):
           // `__counted_by_or_null` / `__sized_by_or_null` on a parameter
