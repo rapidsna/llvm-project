@@ -21781,11 +21781,19 @@ void Sema::ProcessLateParsedTypeAttributesForFields(
     if (auto *CAT = FD->getType()->getAs<CountAttributedType>()) {
       // Validate dependee kinds (e.g. siblings of the same struct) before
       // attaching DependerDeclsAttr, mirroring applyPtrCountedByEndedByAttr.
-      // If diagnoseLateParseCountDependentDecls emits an error, skip the
-      // attach so that DCPAA's DepGroup doesn't pick up an invalid dependee
-      // and emit secondary spurious errors.
-      if (!diagnoseLateParseCountDependentDecls(FD, CAT, /*Level=*/0,
-                                                /*IsFPtr=*/false)) {
+      // If the dep-decls-kind check emits an error, skip the attach so that
+      // DCPAA's DepGroup doesn't pick up an invalid dependee and emit
+      // secondary spurious errors.
+      //
+      // Delegate to the consolidated decl-context leaf. For fields:
+      //   - ScopeCheck=false (fields don't have scope-check semantics;
+      //     dependee validity is enforced by dep-decls-kind).
+      //   - LifetimeCheck=None (fields don't have runtime lifetime).
+      //   - RunDependentDeclsKindCheck=true — the point of this call.
+      if (!ValidateBoundsAttrDeclContext(
+              FD, CAT, /*Level=*/0, /*IsFPtr=*/false,
+              /*ScopeCheck=*/false, Sema::LifetimeCheckKind::None,
+              /*RunDependentDeclsKindCheck=*/true)) {
         AttachDependerDeclsAttr(FD, CAT, /*Level=*/0);
         CheckCountedByAttrOnFieldDecl(FD, CAT->getCountExpr(),
                                       CAT->isCountInBytes(), CAT->isOrNull());
