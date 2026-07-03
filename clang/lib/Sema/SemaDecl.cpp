@@ -21401,35 +21401,18 @@ struct RebuildTypeWithLateParsedAttr
     // CheckArgLifetimeAndScope (SemaDeclAttr.cpp:7392).
     if (IsInsideFunctionType && !isa<FunctionDecl>(VD)) {
       if (const auto *BAT = T->getAs<BoundsAttributedType>()) {
-        bool HadScopeError = false;
-        auto CheckDeclInScope = [&](const ValueDecl *Dependee,
-                                    SourceLocation ExprLoc, unsigned Kind) {
-          if (clang::IsConstOrLateConst(Dependee))
-            return;
-          if (!SemaRef.getCurScope()->isDeclScope(
-                  const_cast<ValueDecl *>(Dependee))) {
-            SemaRef.Diag(
-                ExprLoc,
-                diag::err_bounds_safety_dynamic_bound_arg_different_scope)
-                << Kind;
-            HadScopeError = true;
-          }
-        };
-        if (const auto *CAT = dyn_cast<CountAttributedType>(BAT)) {
-          for (const TypeCoupledDeclRefInfo &DepDeclInfo :
-               CAT->dependent_decls())
-            CheckDeclInScope(cast<ValueDecl>(DepDeclInfo.getDecl()),
-                             CAT->getCountExpr()->getExprLoc(),
-                             CAT->getKind());
-        } else if (const auto *DRPT =
-                       dyn_cast<DynamicRangePointerType>(BAT)) {
-          for (const TypeCoupledDeclRefInfo &EndPtrInfo :
-               DRPT->endptr_decls())
-            CheckDeclInScope(cast<ValueDecl>(EndPtrInfo.getDecl()),
-                             DRPT->getEndPointer()->getExprLoc(),
-                             DRPT->getKind());
-        }
-        if (HadScopeError) {
+        // Delegate to the consolidated decl-context leaf with:
+        //   - ScopeCheck=true   — the fptr-return-scope check we want to
+        //                         fire.
+        //   - LifetimeCheck=None — no runtime-lifetime semantics for
+        //                          fptr-return count references.
+        //   - RunDependentDeclsKindCheck=false — scope-only intent; the
+        //     parameter-post-pass runs dep-decls-kind separately for the
+        //     function's own parameters.
+        if (SemaRef.ValidateBoundsAttrDeclContext(
+                VD, BAT, CurLevel, /*IsFPtr=*/true, /*ScopeCheck=*/true,
+                Sema::LifetimeCheckKind::None,
+                /*RunDependentDeclsKindCheck=*/false)) {
           AL.setInvalid();
           VD->setInvalidDecl();
         }
