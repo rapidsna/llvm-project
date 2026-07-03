@@ -7446,13 +7446,22 @@ bool Sema::ValidateBoundsAttrDeclContext(const NamedDecl *D,
                                          const BoundsAttributedType *BAT,
                                          unsigned Level, bool IsFPtr,
                                          bool ScopeCheck,
-                                         LifetimeCheckKind LifetimeCheck) {
+                                         LifetimeCheckKind LifetimeCheck,
+                                         bool RunDependentDeclsKindCheck) {
   // Lifetime/scope check on all dependees first. Mirrors the eager path's
   // ordering in applyPtrCountedByEndedByAttr, which returns early on
   // lifetime/scope error so the follow-up dep-decls-kind check + attach are
   // skipped for an already-invalid decl.
   if (diagnoseBoundsAttrLifetimeAndScope(*this, BAT, ScopeCheck, LifetimeCheck))
     return true;
+
+  // Callers that only need lifetime/scope validation (eager path's
+  // unconditional first arm; transform's inline scope loop) pass
+  // RunDependentDeclsKindCheck=false to avoid firing dep-decls-kind
+  // diagnostics that the caller either doesn't want (scope-only intent)
+  // or handles via a separate gated call.
+  if (!RunDependentDeclsKindCheck)
+    return false;
 
   // Dep-decls-kind check discriminated on the BAT variant: CAT dependees
   // must be FieldDecl (or IndirectFieldDecl of the same parent) or
@@ -7710,22 +7719,36 @@ void Sema::applyPtrCountedByEndedByAttr(Decl *D, unsigned Level,
 
   // Scope information is not available after template instantiation, so this
   // check has been performed earlier if this is a template instantiation.
+  //
+  // Split the post-Visit decl-context validation into two leaf calls to
+  // preserve the eager path's per-arm gating: lifetime/scope runs
+  // unconditionally, but dep-decls-kind is gated on VD-not-FunctionDecl-
+  // and-not-HadAtomicError (skipping dep-decls-kind for FunctionDecl
+  // depender because the fptr-return-count reference is validated by the
+  // parameter/return post-passes separately, and skipping on atomic error
+  // avoids spurious follow-ups to a soft-error state).
   if (!InInstantiatedTemplate &&
-      diagnoseBoundsAttrLifetimeAndScope(*this, ConstructedType,
-                                         Info.ScopeCheck, Info.LifetimeCheck))
+      ValidateBoundsAttrDeclContext(Info.VD ? cast<NamedDecl>(Info.VD)
+                                            : cast<NamedDecl>(Info.TND),
+                                    ConstructedType, Info.EffectiveLevel,
+                                    Info.IsFPtr, Info.ScopeCheck,
+                                    Info.LifetimeCheck,
+                                    /*RunDependentDeclsKindCheck=*/false))
     return;
 
   if (Info.VD && !isa<FunctionDecl>(Info.VD) && !HadAtomicError) {
-    if (const auto *BDTy = dyn_cast<CountAttributedType>(ConstructedType)) {
-      if (!diagnoseCountDependentDecls(*this, Info.VD, BDTy,
-                                       Info.EffectiveLevel, Info.IsFPtr))
+    // Second call: dep-decls-kind + attach. Lifetime/scope re-run here is
+    // a no-op — it already succeeded above, no state has changed
+    // (diagnostic emission is idempotent-free because we returned early on
+    // any diag), so calling the leaf again with RunDependentDeclsKindCheck
+    // =true only exercises the dep-decls-kind arm.
+    bool HadDepDeclsError = ValidateBoundsAttrDeclContext(
+        Info.VD, ConstructedType, Info.EffectiveLevel, Info.IsFPtr,
+        Info.ScopeCheck, Info.LifetimeCheck,
+        /*RunDependentDeclsKindCheck=*/true);
+    if (!HadDepDeclsError) {
+      if (const auto *BDTy = dyn_cast<CountAttributedType>(ConstructedType))
         AttachDependerDeclsAttr(Info.VD, BDTy, Info.EffectiveLevel);
-    } else if (const auto *BDTy =
-                   dyn_cast<DynamicRangePointerType>(ConstructedType)) {
-      diagnoseRangeDependentDecls(*this, Info.VD, BDTy, Info.EffectiveLevel,
-                                  Info.IsFPtr);
-    } else {
-      llvm_unreachable("Unexpected bounds attributed type");
     }
   }
 
