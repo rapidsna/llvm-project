@@ -16269,19 +16269,27 @@ public:
   /// Post-build decl-context validation for a bounds-attributed declaration.
   /// Mirrors what applyPtrCountedByEndedByAttr does after
   /// ConstructXXXType.Visit returns: runs lifetime/scope check on the
-  /// BoundsAttributedType, and — if that succeeds — the dep-decls-kind
-  /// check appropriate for the BAT variant (CountAttributedType goes
-  /// through diagnoseCountDependentDecls; DynamicRangePointerType goes
-  /// through diagnoseRangeDependentDecls). Callers that want the "attach
+  /// BoundsAttributedType, and — if that succeeds and
+  /// RunDependentDeclsKindCheck is set — the dep-decls-kind check
+  /// appropriate for the BAT variant (CountAttributedType goes through
+  /// diagnoseCountDependentDecls; DynamicRangePointerType goes through
+  /// diagnoseRangeDependentDecls). Callers that want the "attach
   /// DependerDeclsAttr on success" pattern check the return value and do
   /// the attach outside; the leaf is diagnostic-only.
+  ///
+  /// \p RunDependentDeclsKindCheck lets callers request lifetime/scope-only
+  /// validation. The eager applyPtrCountedByEndedByAttr's per-arm gate
+  /// (`Info.VD && !isa<FunctionDecl>(Info.VD) && !HadAtomicError`) and the
+  /// transform's inline scope loop both need this split — see the wire-up
+  /// notes in Phase 8b/c commits.
   ///
   /// Returns true if a diagnostic was emitted.
   bool ValidateBoundsAttrDeclContext(const NamedDecl *D,
                                      const BoundsAttributedType *BAT,
                                      unsigned Level, bool IsFPtr,
                                      bool ScopeCheck,
-                                     LifetimeCheckKind LifetimeCheck);
+                                     LifetimeCheckKind LifetimeCheck,
+                                     bool RunDependentDeclsKindCheck = true);
 
   /// Attach \c DependerDeclsAttr to declarations referred to by \c counted_by
   /// or \c sized_by attributes. This doesn't apply to \c ended_by because it
