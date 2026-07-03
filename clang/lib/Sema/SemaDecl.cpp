@@ -9113,9 +9113,19 @@ NamedDecl *Sema::ActOnVariableDeclarator(
           NewVD, BAT, /*Level=*/0, /*IsFPtr=*/false,
           /*ScopeCheck=*/NewVD->isLocalVarDecl(),
           Sema::getLifetimeCheckKind(NewVD));
-      if (!HadAttrError)
-        if (const auto *CATy = dyn_cast<CountAttributedType>(BAT))
-          AttachDependerDeclsAttr(NewVD, CATy, /*Level=*/0);
+      if (HadAttrError) {
+        // Mark the var invalid so DCPAA's DepGroup analysis skips it and
+        // doesn't emit a follow-up err_bounds_safety_non_adjacent_dependent
+        // _var_decl on top of the more-specific lifetime/scope diag the
+        // leaf already fired. Paired with the invalid-decl gate in
+        // DynamicCountPointerAssignmentAnalysis::TraverseDeclStmt — fixes
+        // Cluster A (sub-shape 4 of [[T10 Feature Gap - Non-Field-Non-
+        // Parameter Decls]]) where the CAT-typed VD, once committed by
+        // GetTypeForDeclarator → HandleCountedByAttrOnType, would
+        // otherwise reach DCPAA and trigger the spurious diag.
+        NewVD->setInvalidDecl();
+      } else if (const auto *CATy = dyn_cast<CountAttributedType>(BAT))
+        AttachDependerDeclsAttr(NewVD, CATy, /*Level=*/0);
     }
     // For globals/locals with `__ended_by`, wrap the end-pointer's type
     // with started_by info. The non-late path runs this via

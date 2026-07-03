@@ -2711,6 +2711,21 @@ bool CheckCountAttributedDeclAssignments::TraverseDeclStmt(DeclStmt *S) {
     if (!Var)
       return TraverseDecl(I);
 
+    // Skip vars whose declaration was already marked invalid by Sema.
+    // A CAT-typed var with a lifetime/scope error (Cluster A: sub-shape 4
+    // of the T10 late-parsing local-var gap) has its more-specific diag
+    // already emitted by ValidateBoundsAttrDeclContext in Sema; opening a
+    // CountDepGroup here would fire a follow-up
+    // err_bounds_safety_non_adjacent_dependent_var_decl on the count var
+    // (e.g. len1 in `int len1; static int *__counted_by(len1) ptr1;`),
+    // which is spurious noise on top of the real error. Sema signals this
+    // by calling NewVD->setInvalidDecl() in ActOnVariableDeclarator's
+    // post-late-parse block.
+    if (Var->isInvalidDecl()) {
+      TraverseDecl(I);
+      continue;
+    }
+
     AssignedDeclRefResult Result;
     analyzeVarDecl(SemaRef, Var, Result);
     if (Result.IsFlexBase && Var->getInit()) {
