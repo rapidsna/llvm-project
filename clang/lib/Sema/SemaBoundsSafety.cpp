@@ -98,17 +98,6 @@ bool Sema::ValidateBoundsAttrTypeShape(QualType Ty, SourceLocation AttrLoc,
       return true;
     }
 
-    // Nested-dynamic-bound: the attribute is being applied at a nested
-    // position (Level != 0). The eager path's applyPtrCountedByEndedByAttr
-    // rejects Level != 0 unconditionally for non-parameters and rejects it
-    // for parameters only when the outer type is itself bounds-attributed
-    // (i.e. NOT an indirect-parameter pattern). Callers pass the
-    // discriminator via IsIndirectParamContext.
-    if (Level != 0 && !IsIndirectParamContext) {
-      Diag(AttrLoc, diag::err_bounds_safety_nested_dynamic_bound) << DiagName;
-      return false;
-    }
-
     // VTT-wrong-pointer-type: counted_by/sized_by/ended_by cannot wrap a
     // __terminated_by pointer (unless the terminator was auto-inferred).
     if (isa<ValueTerminatedType>(T) && !AutoPtrAttributed) {
@@ -188,6 +177,25 @@ bool Sema::ValidateBoundsAttrTypeShape(QualType Ty, SourceLocation AttrLoc,
              diag::err_bounds_safety_conflicting_count_range_attributes);
         return false;
       }
+    }
+
+    // Nested-dynamic-bound: the attribute is being applied at a nested
+    // position (Level != 0). The eager path's applyPtrCountedByEndedByAttr
+    // rejects Level != 0 unconditionally for non-parameters and rejects it
+    // for parameters only when the outer type is itself bounds-attributed
+    // (i.e. NOT an indirect-parameter pattern). Callers pass the
+    // discriminator via IsIndirectParamContext.
+    //
+    // Placed AFTER the CAT/DRPT conflict checks so that the more specific
+    // "pointer cannot have more than one count attribute" wins priority
+    // over "on nested pointer type only allowed on indirect parameters"
+    // when both apply (e.g. `int *__counted_by(a) __counted_by(b) *buf`
+    // as a param, where the SECOND CAT sees InnerType=CAT and should emit
+    // the conflict diag). Placed BEFORE the pointer/array shape checks so
+    // that Level-mismatch is caught before pointee-kind checks.
+    if (Level != 0 && !IsIndirectParamContext) {
+      Diag(AttrLoc, diag::err_bounds_safety_nested_dynamic_bound) << DiagName;
+      return false;
     }
 
     // (Atomic-wrapping-pointer is diagnosed earlier at the top of this

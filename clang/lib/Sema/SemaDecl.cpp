@@ -21325,15 +21325,25 @@ struct RebuildTypeWithLateParsedAttr
     const IdentifierInfo *AttrName =
         AL.printMacroName() ? AL.getMacroIdentifier() : AL.getAttrName();
     std::string DiagName = ("'" + AttrName->getName() + "'").str();
-    // IsIndirectParamContext: on the late path, we're inside a function
-    // declarator when VD is a FunctionDecl (the transform is walking the
-    // function's own type — parameters and return type). The valid
-    // indirect-parameter pattern is: parameter position + outer pointer
-    // is NOT itself bounds-attributed (tracked by
-    // IsInsideBoundsAttrTransform). Mirrors the eager path's
-    // `isa<ParmVarDecl>(D) && !Info.DeclTy->isBoundsAttributedType()`.
+    // IsIndirectParamContext controls whether the leaf's Ext 2
+    // (err_bounds_safety_nested_dynamic_bound) is suppressed. It fires (is
+    // set true) in two cases:
+    //   1. Function-parameter position with a plain outer pointer — the
+    //      canonical valid indirect-parameter pattern. `isa<FunctionDecl>(VD)`
+    //      identifies function-decl transforms (which walk the function's
+    //      own parameters and return type).
+    //   2. We're currently transforming inside an outer BAT
+    //      (IsInsideBoundsAttrTransform=true). In this case a same-level
+    //      BAT-over-BAT conflict is the more specific error and the OUTER
+    //      leaf call will fire it (CAT/DRPT-conflict, VTT-wrong-pointer,
+    //      etc.). Firing nested-dynamic-bound from the INNER leaf would
+    //      shadow that more specific diagnostic — regressed
+    //      clang/test/BoundsSafety/Sema/ptrs-with-multiple-range-attrs.c
+    //      line 10 `int *__counted_by(a) __counted_by(b) *buf` where the
+    //      inner CAT's leaf fired Ext 2 before the outer CAT's leaf could
+    //      report "pointer cannot have more than one count attribute".
     bool IsIndirectParamContext =
-        isa<FunctionDecl>(VD) && !IsInsideBoundsAttrTransform;
+        isa<FunctionDecl>(VD) || IsInsideBoundsAttrTransform;
     if (!SemaRef.ValidateBoundsAttrTypeShape(
             InnerType, AL.getLoc(), AL.getRange(), Flags, DiagName,
             /*AllowRedecl=*/false,
