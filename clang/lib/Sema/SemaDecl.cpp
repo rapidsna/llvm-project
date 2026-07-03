@@ -21394,8 +21394,8 @@ struct RebuildTypeWithLateParsedAttr
     // function's own parameters or return type — invoked from
     // ProcessLateParsedTypeAttributesForParameters), the more-specific
     // `err_invalid_decl_kind_bounds_safety_dynamic_count` diagnostic from
-    // diagnoseLateParseCountDependentDecls already fires; skip here to
-    // avoid a duplicate-and-less-specific error.
+    // ValidateBoundsAttrDeclContext's dep-decls-kind arm already fires;
+    // skip here to avoid a duplicate-and-less-specific error.
     // Mirrors the `IsFPtr` arm of the non-late path's `ScopeCheck` gate at
     // SemaDeclAttr.cpp:7820, and uses the same isDeclScope predicate as
     // CheckArgLifetimeAndScope (SemaDeclAttr.cpp:7392).

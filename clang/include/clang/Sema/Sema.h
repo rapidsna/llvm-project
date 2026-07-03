@@ -16250,22 +16250,6 @@ public:
 
   static LifetimeCheckKind getLifetimeCheckKind(const VarDecl *VD);
 
-  /// Run the lifetime/scope diagnostic for a local VarDecl whose type is
-  /// (or contains) a BoundsAttributedType, mirroring what
-  /// applyPtrCountedByEndedByAttr does on the non-late path. Called from
-  /// the late-parsing path which no longer routes through
-  /// applyPtrCountedByEndedByAttr. Returns true if a diagnostic was emitted.
-  bool diagnoseLateParseBoundsAttrLifetimeAndScope(VarDecl *VD);
-
-  /// Diagnose that the count-expression dependees of a field/parameter
-  /// depender are valid (e.g. siblings of the same struct for FieldDecl,
-  /// parameters of the same function for ParmVarDecl). Returns true if a
-  /// diagnostic was emitted. Wrapper for the late-parsing path so we don't
-  /// need to expose the file-local helper.
-  bool diagnoseLateParseCountDependentDecls(const ValueDecl *Depender,
-                                            const CountAttributedType *CAT,
-                                            unsigned Level, bool IsFPtr);
-
   /// Post-build decl-context validation for a bounds-attributed declaration.
   /// Mirrors what applyPtrCountedByEndedByAttr does after
   /// ConstructXXXType.Visit returns: runs lifetime/scope check on the
