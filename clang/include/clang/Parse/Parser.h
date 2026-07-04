@@ -1531,6 +1531,24 @@ private:
                                bool EnterScope,
                                ParsedAttributes &OutAttrs);
 
+  /// Callback used by Sema to parse a late-parsed type attribute's stored
+  /// tokens into a ParsedAttribute list. Consumes and deletes \p LTA.
+  static void
+  ParseLateParsedTypeAttributeCallback(LateParsedTypeAttribute *LTA,
+                                       ParsedAttributes *OutAttrs);
+
+  /// Callback used by Sema to get the source location of a late-parsed type
+  /// attribute's name (for diagnostics).
+  static SourceLocation
+  GetLateParsedAttributeLocationCallback(const LateParsedTypeAttribute *LTA);
+
+  /// Callback used by Sema during type construction: given a late-parsed
+  /// attribute, dispatch to Sema::ActOnLateParsedTypeAttr to wrap the type
+  /// in a LateParsedAttrType placeholder.
+  static bool ProcessLateParsedTypeAttrCallback(LateParsedAttribute *LA,
+                                                QualType &type,
+                                                unsigned pointerNestLevel);
+
   /// Parse cached tokens for a late-parsed attribute and return the parsed
   /// attributes. Shared implementation used by both ParseLexedCAttribute and
   /// ParseLexedTypeAttribute.

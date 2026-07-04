@@ -144,6 +144,8 @@ class InitializationKind;
 class InitializationSequence;
 class InitializedEntity;
 enum class LangAS : unsigned int;
+struct LateParsedAttribute;
+struct LateParsedTypeAttribute;
 class LocalInstantiationScope;
 class LookupResult;
 class MacroInfo;
@@ -1575,6 +1577,45 @@ public:
     LateTemplateParser = LTP;
     OpaqueParser = P;
   }
+
+  /// Callbacks to the parser to interact with late-parsed type attributes.
+  /// These allow Sema to call back into Parser without including Parser.h.
+
+  /// Callback type to parse and consume a LateParsedTypeAttribute. Used as an
+  /// argument to ProcessLateParsedTypeAttributes.
+  typedef void ParseLateParsedTypeAttributeCB(LateParsedTypeAttribute *LTA,
+                                              ParsedAttributes *OutAttrs);
+
+  /// Callback to get the attribute name location from a
+  /// LateParsedTypeAttribute.
+  typedef SourceLocation
+  GetLateParsedAttributeLocationCB(const LateParsedTypeAttribute *LTA);
+  GetLateParsedAttributeLocationCB *GetLateParsedAttributeLocationCallback =
+      nullptr;
+
+  /// Callback to process a single late-parsed type attribute: validates the
+  /// attribute kind/type and wraps \p type in a LateParsedAttrType node if
+  /// appropriate. Returns false if the attribute is invalid.
+  typedef bool ProcessLateParsedTypeAttrCB(LateParsedAttribute *LA,
+                                           QualType &type,
+                                           unsigned pointerNestLevel);
+  ProcessLateParsedTypeAttrCB *ProcessLateParsedTypeAttrCallback = nullptr;
+
+  void
+  SetLateParsedAttributeCallbacks(GetLateParsedAttributeLocationCB *GetLocCB,
+                                  ProcessLateParsedTypeAttrCB *ProcessCB) {
+    GetLateParsedAttributeLocationCallback = GetLocCB;
+    ProcessLateParsedTypeAttrCallback = ProcessCB;
+  }
+
+  /// Called from the Parser's ProcessLateParsedTypeAttrCallback to validate
+  /// a counted_by-family attribute type and, if valid, wrap \p type in a
+  /// LateParsedAttrType node. Returns false if the attribute should be
+  /// dropped.
+  bool ActOnLateParsedTypeAttr(ParsedAttr::Kind AttrKind,
+                               SourceLocation AttrNameLoc, QualType &type,
+                               unsigned pointerNestLevel,
+                               LateParsedTypeAttribute *LTA);
 
   /// Callback to the parser to parse a type expressed as a string.
   std::function<TypeResult(StringRef, StringRef, SourceLocation)>
@@ -4886,6 +4927,10 @@ public:
   void ActOnFields(Scope *S, SourceLocation RecLoc, Decl *TagDecl,
                    ArrayRef<Decl *> Fields, SourceLocation LBrac,
                    SourceLocation RBrac, const ParsedAttributesView &AttrList);
+
+  /// Transform field types that contain late-parsed type attributes.
+  void ProcessLateParsedTypeAttributesForFields(
+      RecordDecl *EnclosingDecl, ParseLateParsedTypeAttributeCB *ParseCB);
 
   /// ActOnTagStartDefinition - Invoked when we have entered the
   /// scope of a tag's definition (e.g., for an enumeration, class,
