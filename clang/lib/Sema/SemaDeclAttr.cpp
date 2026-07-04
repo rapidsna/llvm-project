@@ -7738,12 +7738,17 @@ void Sema::applyPtrCountedByEndedByAttr(Decl *D, unsigned Level,
   // depender because the fptr-return-count reference is validated by the
   // parameter/return post-passes separately, and skipping on atomic error
   // avoids spurious follow-ups to a soft-error state).
+  //
+  // D may be null here (e.g. ObjC method attributes where neither Info.VD
+  // nor Info.TND applies). That's safe: with RunDependentDeclsKindCheck
+  // =false the leaf only runs lifetime/scope, which doesn't dereference D.
+  const NamedDecl *DForLeaf =
+      Info.VD ? cast<NamedDecl>(Info.VD)
+              : (Info.TND ? cast<NamedDecl>(Info.TND) : nullptr);
   if (!InInstantiatedTemplate &&
-      ValidateBoundsAttrDeclContext(Info.VD ? cast<NamedDecl>(Info.VD)
-                                            : cast<NamedDecl>(Info.TND),
-                                    ConstructedType, Info.EffectiveLevel,
-                                    Info.IsFPtr, Info.ScopeCheck,
-                                    Info.LifetimeCheck,
+      ValidateBoundsAttrDeclContext(DForLeaf, ConstructedType,
+                                    Info.EffectiveLevel, Info.IsFPtr,
+                                    Info.ScopeCheck, Info.LifetimeCheck,
                                     /*RunDependentDeclsKindCheck=*/false))
     return;
 
