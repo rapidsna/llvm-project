@@ -512,6 +512,11 @@ void Parser::Initialize() {
   EnterScope(Scope::DeclScope);
   Actions.ActOnTranslationUnitScope(getCurScope());
 
+  // Register callbacks used by Sema to interact with late-parsed type
+  // attributes.
+  Actions.SetLateParsedAttributeCallbacks(GetLateParsedAttributeLocationCallback,
+                                          ProcessLateParsedTypeAttrCallback);
+
   // Initialization for Objective-C context sensitive keywords recognition.
   // Referenced in Parser::ParseObjCTypeQualifierList.
   if (getLangOpts().ObjC) {

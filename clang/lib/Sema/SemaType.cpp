@@ -11961,3 +11961,13 @@ QualType Sema::BuildAtomicType(QualType T, SourceLocation Loc) {
   // Build the pointer type.
   return Context.getAtomicType(T);
 }
+
+// TODO(prototype): Slice 1 skeleton — real implementation lands in
+// a follow-up commit that wires this into GetTypeForDeclarator's type-attr
+// processing.
+bool Sema::ActOnLateParsedTypeAttr(ParsedAttr::Kind AttrKind,
+                                   SourceLocation AttrNameLoc, QualType &type,
+                                   unsigned pointerNestLevel,
+                                   LateParsedTypeAttribute *LTA) {
+  return true;
+}

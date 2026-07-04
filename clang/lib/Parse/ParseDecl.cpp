@@ -5139,6 +5139,34 @@ void Parser::ParseLexedTypeAttribute(LateParsedTypeAttribute &LA,
   OutAttrs.takeAllAppendingFrom(Attrs);
 }
 
+void Parser::ParseLateParsedTypeAttributeCallback(LateParsedTypeAttribute *LTA,
+                                                  ParsedAttributes *Attrs) {
+  // Parse the cached attribute tokens.
+  LTA->ParseInto(*Attrs);
+  // LateParsedTypeAttribute is no longer needed so delete it. Ideally,
+  // LateParsedAttrType would own this object, but LateParsedTypeAttribute
+  // is intentionally forward declared to avoid making the AST depend on
+  // Sema/Parser components.
+  delete LTA;
+}
+
+SourceLocation Parser::GetLateParsedAttributeLocationCallback(
+    const LateParsedTypeAttribute *LTA) {
+  return LTA ? LTA->AttrNameLoc : SourceLocation();
+}
+
+bool Parser::ProcessLateParsedTypeAttrCallback(LateParsedAttribute *LA,
+                                               QualType &type,
+                                               unsigned pointerNestLevel) {
+  if (!LA || !isa<LateParsedTypeAttribute>(LA))
+    return true;
+  auto *LTA = cast<LateParsedTypeAttribute>(LA);
+  ParsedAttr::Kind AttrKind = ParsedAttr::getParsedKind(
+      &LTA->AttrName, nullptr, ParsedAttr::Form::GNU().getSyntax());
+  return LTA->Self->Actions.ActOnLateParsedTypeAttr(
+      AttrKind, LTA->AttrNameLoc, type, pointerNestLevel, LTA);
+}
+
 void LateParsedTypeAttribute::ParseInto(ParsedAttributes &OutAttrs) {
   // Delegate to the Parser that created this attribute
   Self->ParseLexedTypeAttribute(*this, /*EnterScope*/false, OutAttrs);
