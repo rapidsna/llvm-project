@@ -444,6 +444,9 @@ processTypeAttrs(TypeProcessingState &state, QualType &type,
                  TypeAttrLocation TAL, const ParsedAttributesView &attrs,
                  CUDAFunctionTarget CFT = CUDAFunctionTarget::HostDevice);
 
+static bool processLateTypeAttrs(TypeProcessingState &state, QualType &type,
+                                 const LateParsedAttrList &LateAttrs);
+
 static bool handleFunctionTypeAttr(TypeProcessingState &state, ParsedAttr &attr,
                                    QualType &type, CUDAFunctionTarget CFT);
 
@@ -5572,6 +5575,10 @@ static TypeSourceInfo *GetFullTypeForDeclarator(TypeProcessingState &state,
     // See if there are any attributes on this declarator chunk.
     processTypeAttrs(state, T, TAL_DeclChunk, DeclType.getAttrs(),
                      S.CUDA().IdentifyTarget(D.getAttributes()));
+    // Late-parsed type attributes on this chunk (e.g. counted_by on struct
+    // fields) get wrapped in a LateParsedAttrType placeholder here; the
+    // placeholder is resolved by the field walker after ActOnFields.
+    processLateTypeAttrs(state, T, DeclType.LateAttrList);
 
     if (DeclType.Kind != DeclaratorChunk::Paren) {
       if (ExpectNoDerefChunk && !IsNoDerefableChunk(DeclType))
@@ -9961,6 +9968,23 @@ static void HandleHLSLParamModifierAttr(TypeProcessingState &State,
   }
 }
 
+static bool processLateTypeAttrs(TypeProcessingState &state, QualType &type,
+                                 const LateParsedAttrList &LateAttrs) {
+  if (LateAttrs.empty())
+    return true;
+
+  Sema &S = state.getSema();
+  unsigned pointerNestLevel = 0;
+
+  assert(S.ProcessLateParsedTypeAttrCallback);
+
+  for (auto *LA : LateAttrs)
+    if (!S.ProcessLateParsedTypeAttrCallback(LA, type, pointerNestLevel))
+      return false;
+
+  return true;
+}
+
 static void processTypeAttrs(TypeProcessingState &state, QualType &type,
                              TypeAttrLocation TAL,
                              const ParsedAttributesView &attrs,
@@ -11962,12 +11986,27 @@ QualType Sema::BuildAtomicType(QualType T, SourceLocation Loc) {
   return Context.getAtomicType(T);
 }
 
-// TODO(prototype): Slice 1 skeleton — real implementation lands in
-// a follow-up commit that wires this into GetTypeForDeclarator's type-attr
-// processing.
+// Slice 1: validate the attribute kind and wrap \p type in a
+// LateParsedAttrType placeholder. The concrete BoundsAttr type is
+// materialized later during the field walker's TransformLateParsedAttrType.
+//
+// Note: unlike the pre-consolidation T10 stack, we intentionally do NOT
+// run ValidateBoundsAttrTypeShape here — the walker's leaf runs it later.
 bool Sema::ActOnLateParsedTypeAttr(ParsedAttr::Kind AttrKind,
                                    SourceLocation AttrNameLoc, QualType &type,
                                    unsigned pointerNestLevel,
                                    LateParsedTypeAttribute *LTA) {
+  switch (AttrKind) {
+  case ParsedAttr::AT_CountedBy:
+  case ParsedAttr::AT_CountedByOrNull:
+  case ParsedAttr::AT_SizedBy:
+  case ParsedAttr::AT_SizedByOrNull:
+  case ParsedAttr::AT_PtrEndedBy:
+    break;
+  default:
+    // Not a bounds-safety type attribute; leave `type` untouched.
+    return true;
+  }
+  type = Context.getLateParsedAttrType(type, LTA);
   return true;
 }
