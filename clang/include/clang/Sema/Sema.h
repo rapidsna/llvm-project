@@ -16165,7 +16165,8 @@ public:
                                      unsigned Level, bool IsFPtr,
                                      bool ScopeCheck,
                                      LifetimeCheckKind LifetimeCheck,
-                                     bool RunDependentDeclsKindCheck = true);
+                                     bool RunDependentDeclsKindCheck = true,
+                                     bool RunLifetimeAndScope = true);
 
   /// Attach \c DependerDeclsAttr to declarations referred to by \c counted_by
   /// or \c sized_by attributes. This doesn't apply to \c ended_by because it

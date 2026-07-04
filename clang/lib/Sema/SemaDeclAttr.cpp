@@ -7447,12 +7447,23 @@ bool Sema::ValidateBoundsAttrDeclContext(const NamedDecl *D,
                                          unsigned Level, bool IsFPtr,
                                          bool ScopeCheck,
                                          LifetimeCheckKind LifetimeCheck,
-                                         bool RunDependentDeclsKindCheck) {
+                                         bool RunDependentDeclsKindCheck,
+                                         bool RunLifetimeAndScope) {
   // Lifetime/scope check on all dependees first. Mirrors the eager path's
   // ordering in applyPtrCountedByEndedByAttr, which returns early on
   // lifetime/scope error so the follow-up dep-decls-kind check + attach are
   // skipped for an already-invalid decl.
-  if (diagnoseBoundsAttrLifetimeAndScope(*this, BAT, ScopeCheck, LifetimeCheck))
+  //
+  // Callers that pair a first "RunDep=false" call with a second "RunDep=true"
+  // call on the same (BAT, Decl) pass RunLifetimeAndScope=false on the second
+  // call so the lifetime/scope check doesn't re-emit — necessary because
+  // diagnoseBoundsAttrLifetimeAndScope emits warnings that don't stop the
+  // caller (warn_bounds_safety_extern_array_dynamic_count) and because the
+  // caller may have gated only the first call on !InInstantiatedTemplate,
+  // leaving the second call to fire the scope error spuriously during
+  // template instantiation.
+  if (RunLifetimeAndScope &&
+      diagnoseBoundsAttrLifetimeAndScope(*this, BAT, ScopeCheck, LifetimeCheck))
     return true;
 
   // Callers that only need lifetime/scope validation (eager path's
@@ -7741,11 +7752,18 @@ void Sema::applyPtrCountedByEndedByAttr(Decl *D, unsigned Level,
     // a no-op — it already succeeded above, no state has changed
     // (diagnostic emission is idempotent-free because we returned early on
     // any diag), so calling the leaf again with RunDependentDeclsKindCheck
-    // =true only exercises the dep-decls-kind arm.
+    // =true only exercises the dep-decls-kind arm. Pass
+    // RunLifetimeAndScope=false so warnings emitted by
+    // diagnoseBoundsAttrLifetimeAndScope (e.g.
+    // warn_bounds_safety_extern_array_dynamic_count) don't re-emit, and so
+    // template instantiation — which skips the first call via
+    // !InInstantiatedTemplate — doesn't spuriously fire the scope error
+    // when it reaches this second call.
     bool HadDepDeclsError = ValidateBoundsAttrDeclContext(
         Info.VD, ConstructedType, Info.EffectiveLevel, Info.IsFPtr,
         Info.ScopeCheck, Info.LifetimeCheck,
-        /*RunDependentDeclsKindCheck=*/true);
+        /*RunDependentDeclsKindCheck=*/true,
+        /*RunLifetimeAndScope=*/false);
     if (!HadDepDeclsError) {
       if (const auto *BDTy = dyn_cast<CountAttributedType>(ConstructedType))
         AttachDependerDeclsAttr(Info.VD, BDTy, Info.EffectiveLevel);
