@@ -21099,6 +21099,708 @@ bool Sema::EntirelyFunctionPointers(const RecordDecl *Record) {
   return llvm::all_of(Record->decls(), IsFunctionPointerOrForwardDecl);
 }
 
+static QualType BuildBoundsAttrType(Sema &S, QualType T, Decl *D,
+                                    const ParsedAttr &AL) {
+  if (!AL.diagnoseLangOpts(S))
+    return QualType();
+
+  auto *AttrArg = AL.getArgAsExpr(0);
+  if (!AttrArg)
+    return QualType();
+
+  auto Flags = Sema::getBoundsAttrFlags(AL.getKind());
+
+  if (Flags.IsEndedBy)
+    return S.BuildDynamicRangePointerType(T, /*StartPtr=*/nullptr, AttrArg,
+                                          /*ScopeCheck=*/false);
+
+  return S.BuildCountAttributedType(T, AttrArg, Flags.CountInBytes,
+                                    Flags.OrNull, /*ScopeCheck=*/false);
+}
+
+struct RebuildTypeWithLateParsedAttr
+    : TreeTransform<RebuildTypeWithLateParsedAttr> {
+  using BaseTransform = TreeTransform<RebuildTypeWithLateParsedAttr>;
+  NamedDecl *VD;
+  Sema::ParseLateParsedTypeAttributeCB *ParseCallback;
+  // True while we're transforming inside a BoundsAttributedType wrapper
+  // (CountAttributedType / DynamicRangePointerType). Used by
+  // diagnoseCountAttributedType to choose between the generic "not allowed"
+  // diagnostic and the parameter-specific "is only allowed on indirect
+  // parameters" diagnostic, mirroring the discrimination in
+  // applyPtrCountedByEndedByAttr (SemaDeclAttr.cpp).
+  bool IsInsideBoundsAttrTransform = false;
+
+  // True while the rebuild is descending into a function type (proto or
+  // no-proto). Used to gate the bounds-safety scope check on count
+  // expressions: the check should fire when the bounds attr is on a
+  // function-pointer's return type (where the count must reference a
+  // function parameter, not a foreign decl) but NOT for ordinary struct
+  // field / parameter bounds attrs whose count legitimately references
+  // siblings in the enclosing struct/parameter list. Mirrors the
+  // `IsFPtr` arm of the non-late path's `ScopeCheck` gate at
+  // SemaDeclAttr.cpp:7820.
+  bool IsInsideFunctionType = false;
+
+  RebuildTypeWithLateParsedAttr(Sema &SemaRef, NamedDecl *VD,
+                                Sema::ParseLateParsedTypeAttributeCB *ParseCB)
+      : TreeTransform(SemaRef), VD(VD), ParseCallback(ParseCB) {}
+
+  Decl *getTransformedDecl(Decl *Old) const {
+    auto It = TransformedLocalDecls.find(Old);
+    return It != TransformedLocalDecls.end() ? It->second : nullptr;
+  }
+
+  // TODO: Move this diagnostics outside this. That will help remove
+  // custom many Transform*Type, like TransformDependentSizedArrayType.
+
+  // Helper to check and diagnose if a type is CountAttributedType.
+  // Mirrors applyPtrCountedByEndedByAttr's discrimination (SemaDeclAttr.cpp):
+  //   - Non-parameter (field/var): always error with the "indirect parameters"
+  //     wording (it's documented to mean "this construct is only allowed on
+  //     indirect parameters", i.e., disallowed here).
+  //   - Parameter + outer is bounds-attributed: error with the same wording.
+  //   - Parameter + outer is plain: VALID (indirect parameter pattern),
+  //     suppress.
+  // IsInsideBoundsAttrTransform tracks whether we're inside a CAT/DRPT
+  // transform call (i.e., our outer is bounds-attributed).
+  bool diagnoseCountAttributedType(QualType Ty, SourceLocation Loc) {
+    if (const auto *CAT = Ty->getAs<CountAttributedType>()) {
+      // Indirect parameter (outer pointer has no bounds attr) is allowed.
+      if (isa<FunctionDecl>(VD) && !IsInsideBoundsAttrTransform)
+        return false;
+      // %0 is a single-quoted spelling of the attribute name.
+      static constexpr const char *KindSpelling[] = {
+          "'__counted_by'", "'__sized_by'", "'__counted_by_or_null'",
+          "'__sized_by_or_null'", "'__ended_by'"};
+      SemaRef.Diag(Loc, diag::err_bounds_safety_nested_dynamic_bound)
+          << KindSpelling[CAT->getKind()];
+      VD->setInvalidDecl();
+      return true;
+    }
+    if (Ty->getAs<DynamicRangePointerType>()) {
+      // Same indirect-parameter exception as for CAT.
+      if (isa<FunctionDecl>(VD) && !IsInsideBoundsAttrTransform)
+        return false;
+      SemaRef.Diag(Loc, diag::err_bounds_safety_nested_dynamic_bound)
+          << "'__ended_by'";
+      VD->setInvalidDecl();
+      return true;
+    }
+    return false;
+  }
+
+  QualType TransformLateParsedAttrType(TypeLocBuilder &TLB,
+                                       LateParsedAttrTypeLoc TL) {
+    const LateParsedAttrType *LPA = TL.getTypePtr();
+    auto *LTA = LPA->getLateParsedAttribute();
+
+    // The LateParsedTypeAttribute contains a pointer to the Parser that
+    // created it, along with the cached tokens. Call ParseAndConsume to parse
+    // those tokens now and get the resulting attribute.
+    assert(LTA && "LateParsedAttrType must have a LateParsedTypeAttribute");
+
+    AttributeFactory AF{};
+    ParsedAttributes Attrs(AF);
+
+    // Invoke the parser callback to parse and consume the cached tokens.
+    // ParseCallback is also responsible for deleting LTA.
+    assert(ParseCallback);
+    ParseCallback(LTA, &Attrs);
+
+    // Invalid argument
+    if (Attrs.empty())
+      return QualType();
+
+    assert(Attrs.size() == 1);
+    auto &AL = Attrs[0];
+
+    QualType InnerType;
+    {
+      // While transforming the inner type, signal to nested
+      // TransformPointerType calls that they sit inside a bounds-attributed
+      // wrapper. This lets diagnoseCountAttributedType discriminate
+      // parameter contexts where the outer pointer also has a bounds attr
+      // (use the param-specific diagnostic) from indirect-param contexts
+      // where the outer is plain (suppress the diagnostic).
+      llvm::SaveAndRestore<bool> SAR(IsInsideBoundsAttrTransform, true);
+      InnerType = TransformType(TLB, TL.getInnerLoc());
+    }
+    if (InnerType.isNull()) {
+      VD->setInvalidDecl();
+      // Even if the inner transform failed (e.g., a nested-pointer-CAT
+      // rejection in TransformPointerType), still validate the count
+      // expression's type. The test suite expects BOTH diagnostics to
+      // fire for `int *__counted_by(len) *__counted_by(len) buf` where
+      // `len` is non-integer.
+      auto Flags2 = Sema::getBoundsAttrFlags(AL.getKind());
+      if (!Flags2.IsEndedBy) {
+        if (Expr *AttrArg = AL.getArgAsExpr(0)) {
+          QualType ArgTy = AttrArg->getType();
+          if (!ArgTy.isNull() &&
+              (!ArgTy->isIntegerType() || ArgTy->isBooleanType())) {
+            static constexpr const char *KindSpelling[] = {
+                "'__counted_by'", "'__sized_by'",
+                "'__counted_by_or_null'", "'__sized_by_or_null'"};
+            unsigned Kind = static_cast<unsigned>(Flags2.OrNull) << 1 |
+                            static_cast<unsigned>(Flags2.CountInBytes);
+            SemaRef.Diag(
+                AttrArg->getBeginLoc(),
+                diag::err_attribute_argument_type_for_bounds_safety_count)
+                << KindSpelling[Kind] << AttrArg->getSourceRange();
+          }
+        }
+      }
+      return QualType();
+    }
+
+    // Detect duplicate count or end attribute on the same type:
+    //   int *__counted_by(n) __counted_by(n) p;
+    //   int arr[__counted_by(n) __counted_by(n)];
+    // After the inner LateParsedAttr resolves, InnerType is already wrapped
+    // in CAT (for counted_by/sized_by) or DRPT (for ended_by). Wrapping
+    // another bounds-attributed layer around it would silently nest the
+    // attribute. Mirror diagnoseCountAttributedTypeShape's duplicate check
+    // from applyPtrCountedByEndedByAttr (SemaDeclAttr.cpp:6473-6494).
+    auto Flags = Sema::getBoundsAttrFlags(AL.getKind());
+    // Conflict between explicit bound attribute (__bidi_indexable /
+    // __indexable) and __counted_by family / __ended_by. Mirror
+    // diagnoseCountAttributedTypeShape's check at SemaDeclAttr.cpp:6582-6587
+    // — the late path doesn't go through that helper, so re-check here.
+    // Pre-check before BuildBoundsAttrType so that on conflict we can bail
+    // (skip building the CAT/DRPT) and mark the decl invalid to suppress
+    // follow-up scope diagnostics (e.g. "count expression in function
+    // declaration may only reference parameters of that function" for a
+    // global count expression).
+    if (const auto *InnerPT = InnerType->getAs<PointerType>()) {
+      auto FAttr = InnerPT->getPointerAttributes();
+      if (FAttr.hasUpperBound() && !InnerType->hasAttr(attr::PtrAutoAttr)) {
+        unsigned DiagKind;
+        if (Flags.IsEndedBy)
+          DiagKind = 4; // '__ended_by'
+        else if (Flags.CountInBytes)
+          DiagKind = Flags.OrNull ? 3 : 1;
+        else
+          DiagKind = Flags.OrNull ? 2 : 0;
+        static constexpr const char *KindSpelling[] = {
+            "'__counted_by'", "'__sized_by'", "'__counted_by_or_null'",
+            "'__sized_by_or_null'", "'__ended_by'"};
+        SemaRef.Diag(
+            AL.getLoc(),
+            diag::err_bounds_safety_conflicting_count_bound_attributes)
+            << KindSpelling[DiagKind] << (FAttr.hasLowerBound() ? 0 : 1);
+        AL.setInvalid();
+        VD->setInvalidDecl();
+        return InnerType;
+      }
+    }
+    if (!Flags.IsEndedBy) {
+      if (const auto *InnerCAT = InnerType->getAs<CountAttributedType>()) {
+        SemaRef.Diag(AL.getLoc(),
+                     diag::err_bounds_safety_conflicting_pointer_attributes)
+            << InnerCAT->isPointerType() << /*count*/ 2;
+        AL.setInvalid();
+        VD->setInvalidDecl();
+        return InnerType;
+      }
+      // Count attribute applied over an existing range (ended_by) attribute
+      // is invalid — mirror diagnoseCountAttributedTypeShape at
+      // SemaDeclAttr.cpp:6501-6504 which emits
+      // err_bounds_safety_conflicting_count_range_attributes.
+      if (InnerType->getAs<DynamicRangePointerType>()) {
+        SemaRef.Diag(AL.getLoc(),
+                     diag::err_bounds_safety_conflicting_count_range_attributes);
+        AL.setInvalid();
+        VD->setInvalidDecl();
+        return InnerType;
+      }
+    } else {
+      if (InnerType->getAs<DynamicRangePointerType>()) {
+        SemaRef.Diag(AL.getLoc(),
+                     diag::err_bounds_safety_conflicting_pointer_attributes)
+            << /*pointer*/ 1 << /*end*/ 3;
+        AL.setInvalid();
+        VD->setInvalidDecl();
+        return InnerType;
+      }
+      // Range (ended_by) attribute applied over an existing count attribute.
+      if (InnerType->getAs<CountAttributedType>()) {
+        SemaRef.Diag(AL.getLoc(),
+                     diag::err_bounds_safety_conflicting_count_range_attributes);
+        AL.setInvalid();
+        VD->setInvalidDecl();
+        return InnerType;
+      }
+    }
+
+    // Mirror applyPtrCountedByEndedByAttr (SemaDeclAttr.cpp:8001-8011): if
+    // the count expression has a non-integer type (e.g. a call to a const
+    // function returning `void`), emit the integer-type diagnostic BEFORE
+    // BuildCountAttributedType runs CountArgChecker on the call. Otherwise
+    // CountArgChecker emits a spurious "can only reference function with
+    // 'const' attribute" diagnostic for the wrong root cause. Bail out
+    // (don't build the CAT) so downstream validators don't double-report.
+    if (!Flags.IsEndedBy) {
+      if (Expr *AttrArg = AL.getArgAsExpr(0)) {
+        QualType ArgTy = AttrArg->getType();
+        if (!ArgTy.isNull() &&
+            !ArgTy->isIntegralOrEnumerationType()) {
+          static constexpr const char *KindSpelling[] = {
+              "'__counted_by'", "'__sized_by'",
+              "'__counted_by_or_null'", "'__sized_by_or_null'"};
+          unsigned Kind = static_cast<unsigned>(Flags.OrNull) << 1 |
+                          static_cast<unsigned>(Flags.CountInBytes);
+          SemaRef.Diag(
+              AttrArg->getBeginLoc(),
+              diag::err_attribute_argument_type_for_bounds_safety_count)
+              << KindSpelling[Kind] << AttrArg->getSourceRange();
+          AL.setInvalid();
+          VD->setInvalidDecl();
+          return InnerType;
+        }
+      }
+    }
+
+    QualType T = BuildBoundsAttrType(SemaRef, InnerType, VD, AL);
+
+    if (T.isNull()) {
+      AL.setInvalid();
+      VD->setInvalidDecl();
+      return QualType();
+    }
+
+    // Bounds-safety scope check: each decl referenced by the count/range
+    // expression must be declared in the current scope. This only applies
+    // when the bounds attr is structurally inside a function-pointer type
+    // (return-type position) — the count must reference a function
+    // parameter, not a foreign decl, because the function is invoked from
+    // call sites that don't have access to the surrounding lexical scope.
+    // For ordinary struct field / parameter / local-var bounds attrs whose
+    // count legitimately references siblings, the check is skipped.
+    // When VD is a FunctionDecl (i.e. the rebuild is processing the
+    // function's own parameters or return type — invoked from
+    // ProcessLateParsedTypeAttributesForParameters), the more-specific
+    // `err_invalid_decl_kind_bounds_safety_dynamic_count` diagnostic from
+    // diagnoseLateParseCountDependentDecls already fires; skip here to
+    // avoid a duplicate-and-less-specific error.
+    // Mirrors the `IsFPtr` arm of the non-late path's `ScopeCheck` gate at
+    // SemaDeclAttr.cpp:7820, and uses the same isDeclScope predicate as
+    // CheckArgLifetimeAndScope (SemaDeclAttr.cpp:7392).
+    if (IsInsideFunctionType && !isa<FunctionDecl>(VD)) {
+      if (const auto *BAT = T->getAs<BoundsAttributedType>()) {
+        bool HadScopeError = false;
+        auto CheckDeclInScope = [&](const ValueDecl *Dependee,
+                                    SourceLocation ExprLoc, unsigned Kind) {
+          if (clang::IsConstOrLateConst(Dependee))
+            return;
+          if (!SemaRef.getCurScope()->isDeclScope(
+                  const_cast<ValueDecl *>(Dependee))) {
+            SemaRef.Diag(
+                ExprLoc,
+                diag::err_bounds_safety_dynamic_bound_arg_different_scope)
+                << Kind;
+            HadScopeError = true;
+          }
+        };
+        if (const auto *CAT = dyn_cast<CountAttributedType>(BAT)) {
+          for (const TypeCoupledDeclRefInfo &DepDeclInfo :
+               CAT->dependent_decls())
+            CheckDeclInScope(cast<ValueDecl>(DepDeclInfo.getDecl()),
+                             CAT->getCountExpr()->getExprLoc(),
+                             CAT->getKind());
+        } else if (const auto *DRPT =
+                       dyn_cast<DynamicRangePointerType>(BAT)) {
+          for (const TypeCoupledDeclRefInfo &EndPtrInfo :
+               DRPT->endptr_decls())
+            CheckDeclInScope(cast<ValueDecl>(EndPtrInfo.getDecl()),
+                             DRPT->getEndPointer()->getExprLoc(),
+                             DRPT->getKind());
+        }
+        if (HadScopeError) {
+          AL.setInvalid();
+          VD->setInvalidDecl();
+        }
+      }
+    }
+
+    AL.setUsedAsTypeAttr();
+
+    // Push the TypeLoc matching the result's own class. Use isa<> rather
+    // than getAs<>: when the user writes a conflicting combination like
+    // __counted_by(n) __ended_by(end), T can be CAT(DRPT(...)) (or vice
+    // versa), and getAs<> would look through sugar and report the wrong
+    // class, causing TypeLocBuilder::push to assert on a castAs mismatch.
+    // The conflict itself is diagnosed elsewhere (ValidateBoundsAttrTypeShape).
+    if (isa<DynamicRangePointerType>(T))
+      TLB.push<DynamicRangePointerTypeLoc>(T);
+    else
+      TLB.push<CountAttributedTypeLoc>(T);
+
+    return T;
+  }
+
+  // When the rebuild descends into a function prototype, push the function's
+  // prototype scope so any LateParsedAttrType placeholders encountered while
+  // transforming the return type or parameter types resolve their count
+  // expression identifiers against the function's parameters first. This
+  // implements priority 1 of the dependent-attributes lookup model (function
+  // declarator parameters), with the surrounding scope chain handling
+  // priorities 2 (member namespace) and 3 (lexically enclosing scopes).
+  //
+  // Bring the inherited 5-arg TransformFunctionProtoType overload into scope
+  // — the base class's 2-arg wrapper at TreeTransform.h:6675 calls
+  // getDerived().TransformFunctionProtoType(TLB, TL, ThisCtx, Quals, ExcSpec)
+  // (5 args), which the 2-arg override below would otherwise hide.
+  using BaseTransform::TransformFunctionProtoType;
+  QualType TransformFunctionProtoType(TypeLocBuilder &TLB,
+                                      FunctionProtoTypeLoc TL) {
+    Scope ProtoScope(SemaRef.getCurScope(),
+                     Scope::FunctionPrototypeScope | Scope::DeclScope,
+                     SemaRef.getDiagnostics());
+    llvm::SaveAndRestore<Scope *> SavedScope(SemaRef.CurScope, &ProtoScope);
+    llvm::SaveAndRestore<bool> SavedInFn(IsInsideFunctionType, true);
+
+    for (unsigned i = 0, e = TL.getNumParams(); i != e; ++i)
+      if (auto *PD = TL.getParam(i))
+        SemaRef.ActOnReenterCXXMethodParameter(SemaRef.getCurScope(), PD);
+
+    QualType Result = BaseTransform::TransformFunctionProtoType(TLB, TL);
+
+    SemaRef.ActOnPopScope(SourceLocation(), &ProtoScope);
+    return Result;
+  }
+
+  // Empty parameter list `()` in C parses as FunctionNoProtoType (K&R-style)
+  // rather than FunctionProtoType with zero params. To get the same
+  // "count expression must reference function parameters" diagnostic as the
+  // proto case (e.g. for `void *__sized_by(glen) (*fp)();` rejecting a global
+  // count), push an empty prototype scope here too so the scope check inside
+  // TransformLateParsedAttrType sees an empty FunctionPrototypeScope as the
+  // current scope and rejects any decl reference (no params to match).
+  QualType TransformFunctionNoProtoType(TypeLocBuilder &TLB,
+                                        FunctionNoProtoTypeLoc TL) {
+    Scope ProtoScope(SemaRef.getCurScope(),
+                     Scope::FunctionPrototypeScope | Scope::DeclScope,
+                     SemaRef.getDiagnostics());
+    llvm::SaveAndRestore<Scope *> SavedScope(SemaRef.CurScope, &ProtoScope);
+    llvm::SaveAndRestore<bool> SavedInFn(IsInsideFunctionType, true);
+
+    QualType Result = BaseTransform::TransformFunctionNoProtoType(TLB, TL);
+
+    SemaRef.ActOnPopScope(SourceLocation(), &ProtoScope);
+    return Result;
+  }
+
+  QualType TransformPointerType(TypeLocBuilder &TLB, PointerTypeLoc TL) {
+    QualType PointeeType = getDerived().TransformType(TLB, TL.getPointeeLoc());
+    if (PointeeType.isNull()) {
+      VD->setInvalidDecl();
+      return QualType();
+    }
+
+    // Diagnose pointer to incomplete __counted_by array, e.g.
+    //   int (*ptr)[__counted_by(n)];
+    // The non-late path's applyPtrCountedByEndedByAttr emits
+    // `err_bounds_safety_unsupported_address_of_incomplete_array_type` for
+    // this shape via its `Info.Ty->isArrayType() && Info.EffectiveLevel > 0`
+    // check (SemaDeclAttr.cpp:7951). Mirror it here.
+    if (const auto *PointeeCAT =
+            PointeeType->getAs<CountAttributedType>()) {
+      QualType Wrapped = PointeeCAT->desugar();
+      if (Wrapped->isArrayType()) {
+        SemaRef.Diag(
+            TL.getSigilLoc(),
+            diag::err_bounds_safety_unsupported_address_of_incomplete_array_type)
+            << Wrapped;
+        VD->setInvalidDecl();
+        // Apply attribute anyway to avoid misleading follow-up diagnostics
+        // (same comment as non-late path).
+      }
+    }
+
+    // Diagnose nested pointer with counted_by attribute
+    // e.g., int * __counted_by(n) *ptr;
+    if (diagnoseCountAttributedType(PointeeType, TL.getSigilLoc()))
+      return QualType();
+
+    QualType Result = TL.getType();
+    if (getDerived().AlwaysRebuild() ||
+        PointeeType != TL.getPointeeLoc().getType()) {
+      // TO_UPSTREAM(BoundsSafety): Upstream doesn't pass BoundsSafetyAttributes.
+      Result = getDerived().RebuildPointerType(PointeeType, TL.getPointerAttributes(), TL.getSigilLoc());
+      if (Result.isNull()) {
+        VD->setInvalidDecl();
+        return QualType();
+      }
+    }
+
+    PointerTypeLoc NewTL = TLB.push<PointerTypeLoc>(Result);
+    NewTL.setSigilLoc(TL.getSigilLoc());
+    return Result;
+  }
+
+  QualType TransformConstantArrayType(TypeLocBuilder &TLB,
+                                      ConstantArrayTypeLoc TL) {
+    const ConstantArrayType *T = TL.getTypePtr();
+    QualType ElementType = getDerived().TransformType(TLB, TL.getElementLoc());
+    if (ElementType.isNull()) {
+      VD->setInvalidDecl();
+      return QualType();
+    }
+
+    // Diagnose array with element type having counted_by attribute
+    // e.g., int * __counted_by(n) arr[10];
+    if (diagnoseCountAttributedType(ElementType, TL.getLBracketLoc()))
+      return QualType();
+
+    // Continue with normal array transformation
+    Expr *OldSize = TL.getSizeExpr();
+    if (!OldSize)
+      OldSize = const_cast<Expr *>(T->getSizeExpr());
+    Expr *NewSize = nullptr;
+    if (OldSize) {
+      EnterExpressionEvaluationContext Unevaluated(
+          SemaRef, Sema::ExpressionEvaluationContext::ConstantEvaluated);
+      NewSize = getDerived().TransformExpr(OldSize).template getAs<Expr>();
+      NewSize = SemaRef.ActOnConstantExpression(NewSize).get();
+    }
+
+    QualType Result = TL.getType();
+    if (getDerived().AlwaysRebuild() || ElementType != T->getElementType() ||
+        (T->getSizeExpr() && NewSize != OldSize)) {
+      Result = getDerived().RebuildConstantArrayType(
+          ElementType, T->getSizeModifier(), T->getSize(), NewSize,
+          T->getIndexTypeCVRQualifiers(), TL.getBracketsRange());
+      if (Result.isNull()) {
+        VD->setInvalidDecl();
+        return QualType();
+      }
+    }
+
+    ArrayTypeLoc NewTL = TLB.push<ArrayTypeLoc>(Result);
+    NewTL.setLBracketLoc(TL.getLBracketLoc());
+    NewTL.setRBracketLoc(TL.getRBracketLoc());
+    NewTL.setSizeExpr(NewSize);
+
+    return Result;
+  }
+
+  QualType TransformIncompleteArrayType(TypeLocBuilder &TLB,
+                                        IncompleteArrayTypeLoc TL) {
+    const IncompleteArrayType *T = TL.getTypePtr();
+    QualType ElementType = getDerived().TransformType(TLB, TL.getElementLoc());
+    if (ElementType.isNull()) {
+      VD->setInvalidDecl();
+      return QualType();
+    }
+
+    // Diagnose flexible array member with element type having counted_by
+    // attribute e.g., int * __counted_by(n) arr[];
+    if (diagnoseCountAttributedType(ElementType, TL.getLBracketLoc()))
+      return QualType();
+
+    QualType Result = TL.getType();
+    if (getDerived().AlwaysRebuild() || ElementType != T->getElementType()) {
+      Result = getDerived().RebuildIncompleteArrayType(
+          ElementType, T->getSizeModifier(), T->getIndexTypeCVRQualifiers(),
+          TL.getBracketsRange());
+      if (Result.isNull()) {
+        VD->setInvalidDecl();
+        return QualType();
+      }
+    }
+
+    IncompleteArrayTypeLoc NewTL = TLB.push<IncompleteArrayTypeLoc>(Result);
+    NewTL.setLBracketLoc(TL.getLBracketLoc());
+    NewTL.setRBracketLoc(TL.getRBracketLoc());
+    NewTL.setSizeExpr(nullptr);
+
+    return Result;
+  }
+
+  QualType TransformVariableArrayType(TypeLocBuilder &TLB,
+                                      VariableArrayTypeLoc TL) {
+    const VariableArrayType *T = TL.getTypePtr();
+    QualType ElementType = getDerived().TransformType(TLB, TL.getElementLoc());
+    if (ElementType.isNull()) {
+      VD->setInvalidDecl();
+      return QualType();
+    }
+
+    // Diagnose VLA with element type having counted_by attribute
+    // e.g., int * __counted_by(n) arr[m];
+    if (diagnoseCountAttributedType(ElementType, TL.getLBracketLoc()))
+      return QualType();
+
+    // Transform the size expression
+    ExprResult SizeResult = getDerived().TransformExpr(T->getSizeExpr());
+    if (SizeResult.isInvalid()) {
+      VD->setInvalidDecl();
+      return QualType();
+    }
+    Expr *Size = SizeResult.get();
+
+    QualType Result = TL.getType();
+    if (getDerived().AlwaysRebuild() || ElementType != T->getElementType() ||
+        Size != T->getSizeExpr()) {
+      Result = getDerived().RebuildVariableArrayType(
+          ElementType, T->getSizeModifier(), Size,
+          T->getIndexTypeCVRQualifiers(), TL.getBracketsRange());
+      if (Result.isNull()) {
+        VD->setInvalidDecl();
+        return QualType();
+      }
+    }
+
+    VariableArrayTypeLoc NewTL = TLB.push<VariableArrayTypeLoc>(Result);
+    NewTL.setLBracketLoc(TL.getLBracketLoc());
+    NewTL.setRBracketLoc(TL.getRBracketLoc());
+    NewTL.setSizeExpr(Size);
+
+    return Result;
+  }
+
+  QualType TransformDependentSizedArrayType(TypeLocBuilder &TLB,
+                                            DependentSizedArrayTypeLoc TL) {
+    const DependentSizedArrayType *T = TL.getTypePtr();
+    QualType ElementType = getDerived().TransformType(TLB, TL.getElementLoc());
+    if (ElementType.isNull()) {
+      VD->setInvalidDecl();
+      return QualType();
+    }
+
+    // Diagnose dependent-sized array with element type having counted_by
+    // attribute e.g., template<int N> struct S { int * __counted_by(n) arr[N];
+    // };
+    if (diagnoseCountAttributedType(ElementType, TL.getLBracketLoc()))
+      return QualType();
+
+    // Transform the size expression
+    EnterExpressionEvaluationContext Unevaluated(
+        SemaRef, Sema::ExpressionEvaluationContext::Unevaluated);
+    ExprResult SizeResult = getDerived().TransformExpr(T->getSizeExpr());
+    if (SizeResult.isInvalid()) {
+      VD->setInvalidDecl();
+      return QualType();
+    }
+    Expr *Size = SizeResult.get();
+
+    QualType Result = TL.getType();
+    if (getDerived().AlwaysRebuild() || ElementType != T->getElementType() ||
+        Size != T->getSizeExpr()) {
+      Result = getDerived().RebuildDependentSizedArrayType(
+          ElementType, T->getSizeModifier(), Size,
+          T->getIndexTypeCVRQualifiers(), TL.getBracketsRange());
+      if (Result.isNull()) {
+        VD->setInvalidDecl();
+        return QualType();
+      }
+    }
+
+    DependentSizedArrayTypeLoc NewTL =
+        TLB.push<DependentSizedArrayTypeLoc>(Result);
+    NewTL.setLBracketLoc(TL.getLBracketLoc());
+    NewTL.setRBracketLoc(TL.getRBracketLoc());
+    NewTL.setSizeExpr(Size);
+
+    return Result;
+  }
+};
+
+void Sema::ProcessLateParsedTypeAttributesForFields(
+    RecordDecl *EnclosingDecl, ParseLateParsedTypeAttributeCB *ParseCB) {
+  // Pass 1: resolve LateParsedAttrType placeholders on every field, applying
+  // __single re-wrap. We must finish all placeholder resolutions before any
+  // cross-field wiring (started_by, depender_decls), because attaching
+  // those modifies sibling fields' types -- a later iteration of pass 1
+  // would re-resolve from the original TSI and clobber the cross-references.
+  for (auto *I : EnclosingDecl->decls()) {
+    FieldDecl *FD = dyn_cast<FieldDecl>(I);
+    IndirectFieldDecl *IFD = dyn_cast<IndirectFieldDecl>(I);
+    if (!FD && IFD) {
+      FD = IFD->getAnonField();
+    }
+    if (!FD || FD->getType()->isRecordType())
+      continue;
+
+    RebuildTypeWithLateParsedAttr RebuildFieldType(*this, FD, ParseCB);
+    auto *OldTSI = FD->getTypeSourceInfo();
+    auto *TSI = RebuildFieldType.TransformType(FD->getTypeSourceInfo());
+    if (TSI && TSI != OldTSI) {
+      QualType NewTy = TSI->getType();
+      FD->setTypeSourceInfo(TSI);
+      FD->setType(NewTy);
+      if (IFD) {
+        IFD->setType(NewTy);
+      }
+      // Re-run BoundsSafety pointer auto-deduction. The TreeTransform rebuilt
+      // pointers from TypeLoc-recorded (parsed/unspecified) attributes,
+      // losing the __single (and other auto attributes) that MakeAutoPointer
+      // applied at parse time. Re-running deduce reapplies them recursively
+      // through nested CAT/DRPT/VTT/pointer chains.
+      if (getLangOpts().hasBoundsSafetyAttributes())
+        deduceBoundsSafetyPointerTypes(FD);
+    }
+  }
+
+  // Pass 2: cross-field wiring on now-stable types.
+  for (auto *I : EnclosingDecl->decls()) {
+    FieldDecl *FD = dyn_cast<FieldDecl>(I);
+    IndirectFieldDecl *IFD = dyn_cast<IndirectFieldDecl>(I);
+    if (!FD && IFD) {
+      FD = IFD->getAnonField();
+    }
+    if (!FD || FD->getType()->isRecordType())
+      continue;
+
+    if (auto *CAT = FD->getType()->getAs<CountAttributedType>()) {
+      // Validate dependee kinds (e.g. siblings of the same struct) before
+      // attaching DependerDeclsAttr, mirroring applyPtrCountedByEndedByAttr.
+      // If diagnoseLateParseCountDependentDecls emits an error, skip the
+      // attach so that DCPAA's DepGroup doesn't pick up an invalid dependee
+      // and emit secondary spurious errors.
+      if (!ValidateBoundsAttrDeclContext(FD, CAT, /*Level=*/0, /*IsFPtr=*/false, /*ScopeCheck=*/false, /*LifetimeCheck=*/Sema::LifetimeCheckKind::None,
+                                        /*RunDependentDeclsKindCheck=*/true, /*RunLifetimeAndScope=*/false)) {
+        AttachDependerDeclsAttr(FD, CAT, /*Level=*/0);
+        CheckCountedByAttrOnField(FD, CAT->getCountExpr(),
+                                      CAT->isCountInBytes(), CAT->isOrNull());
+      }
+      // Mirror the nullability checks done for parameters in
+      // ProcessLateParsedTypeAttributesForParameters. Fields can carry
+      // `_Nonnull`/`_Nullable` type nullability on the pointer; combining
+      // `__counted_by_or_null` with `_Nonnull` (or non-zero `__counted_by`
+      // with `_Nullable`) is a documented diagnostic on the non-late path.
+      NullabilityKindOrNone AttrNullability = FD->getType()->getNullability();
+      if (CAT->isOrNull()) {
+        if (AttrNullability == NullabilityKind::NonNull) {
+          Diag(FD->getLocation(),
+               diag::warn_bounds_safety_nullable_dynamic_count_nonnullable)
+              << CAT->isCountInBytes();
+        }
+      } else {
+        if (auto CountArg =
+                CAT->getCountExpr()->getIntegerConstantExpr(Context)) {
+          if (*CountArg > 0 && AttrNullability == NullabilityKind::Nullable)
+            Diag(CAT->getCountExpr()->getExprLoc(),
+                 diag::warn_bounds_safety_nonnullable_dynamic_count_nullable)
+                << CAT->isCountInBytes() << FD->getSourceRange();
+        }
+      }
+    }
+    // For ended_by: mark end-pointer fields with started_by(this_field).
+    if (auto *DRPT = FD->getType()->getAs<DynamicRangePointerType>()) {
+      // ended_by on a union member is invalid — mirror the union check
+      // CheckCountedByAttrOnFieldDecl does for counted_by/sized_by.
+      if (FD->getParent()->isUnion()) {
+        Diag(FD->getBeginLoc(), diag::err_count_attr_in_union)
+            << BoundsAttributedType::EndedBy << FD->getSourceRange();
+        continue;
+      }
+      AttachStartedByToEndPointers(FD, DRPT);
+    }
+  }
+}
+
 void Sema::ActOnFields(Scope *S, SourceLocation RecLoc, Decl *EnclosingDecl,
                        ArrayRef<Decl *> Fields, SourceLocation LBrac,
                        SourceLocation RBrac,

@@ -115,6 +115,10 @@ namespace llvm {
 struct InlineAsmIdentifierInfo;
 } // namespace llvm
 
+// Forward-declared at global namespace scope so Sema can friend it. The
+// struct itself is file-local in SemaDecl.cpp.
+struct RebuildTypeWithLateParsedAttr;
+
 namespace clang {
 class ADLResult;
 class APValue;
@@ -1870,6 +1874,7 @@ protected:
   friend class ASTReader;
   friend class ASTDeclReader;
   friend class ASTWriter;
+  friend struct ::RebuildTypeWithLateParsedAttr;
 
 private:
   std::optional<std::unique_ptr<DarwinSDKInfo>> CachedDarwinSDKInfo;
@@ -16220,6 +16225,13 @@ public:
   void AttachDependerDeclsAttr(ValueDecl *NewDepender,
                                const CountAttributedType *NewDependerCountTy,
                                unsigned Level);
+
+  /// For an \c __ended_by DynamicRangePointerType on \p StartField, attach
+  /// an implicit \c StartedByPointerAttr sugar to each end-pointer decl
+  /// referenced by the range so bounds checking can trace start->end.
+  void AttachStartedByToEndPointers(ValueDecl *StartField,
+                                    const DynamicRangePointerType *DRPT,
+                                    bool StartIsDeref = false);
 
   QualType BuildCountAttributedType(QualType PointerTy, Expr *CountExpr,
                                     bool CountInBytes = false,
