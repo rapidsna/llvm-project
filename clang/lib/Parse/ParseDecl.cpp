@@ -124,6 +124,17 @@ static bool IsAttributeArgsParsedInFunctionScope(const IdentifierInfo &II) {
 #undef CLANG_ATTR_PARSE_ARGS_IN_FUNCTION_SCOPE_LIST
 }
 
+/// Returns true iff the attribute kind corresponds to a TypeAttr or
+/// DeclOrTypeAttr in Attr.td. Only valid for parsed attribute kinds (those
+/// with ParsedAttr::AT_* enum values); implicitly-created type attributes
+/// (SemaHandler=0, Spellings=[]) are never parsed and never reach here.
+static bool IsAttributeTypeAttr(ParsedAttr::Kind Kind) {
+  const auto &Infos = ParsedAttrInfo::getAllBuiltin();
+  if ((size_t)Kind < Infos.size())
+    return Infos[Kind]->IsType;
+  return false;
+}
+
 /// Check if the a start and end source location expand to the same macro.
 static bool FindLocsWithCommonFileID(Preprocessor &PP, SourceLocation StartLoc,
                                      SourceLocation EndLoc) {
@@ -199,8 +210,24 @@ bool Parser::ParseSingleGNUAttribute(ParsedAttributes &Attrs,
   }
 
   // Handle attributes with arguments that require late parsing.
-  LateParsedAttribute *LA =
-      new LateParsedAttribute(this, *AttrName, AttrNameLoc);
+  //
+  // Slice 1 dispatch gate: for bounds-safety type attrs (counted_by,
+  // sized_by, ended_by, and their _or_null variants) attached to struct
+  // fields in C, use the new LateParsedTypeAttribute placeholder path.
+  // The placeholder is resolved by ProcessLateParsedTypeAttributesForFields
+  // after the enclosing struct body is fully parsed, when all sibling
+  // fields (potentially referenced by the count/end expression) are in
+  // scope. Every other decl kind (function parameters, file-scope vars,
+  // typedefs, C++ contexts) stays on the existing LateParsedAttribute
+  // cached-token path — Slices 2/3 will migrate them.
+  ParsedAttr::Kind AttrKind = ParsedAttr::getParsedKind(
+      AttrName, nullptr, ParsedAttr::Form::GNU().getSyntax());
+  LateParsedAttribute *LA = nullptr;
+  if (IsAttributeTypeAttr(AttrKind) && !getLangOpts().CPlusPlus &&
+      D && D->getContext() == DeclaratorContext::Member)
+    LA = new LateParsedTypeAttribute(this, *AttrName, AttrNameLoc);
+  else
+    LA = new LateParsedAttribute(this, *AttrName, AttrNameLoc);
   LateAttrs->push_back(LA);
 
   // Attributes in a class are parsed at the end of the class, along
@@ -5325,6 +5352,16 @@ void Parser::ParseStructUnionBody(SourceLocation RecordLoc,
   } /* TO_UPSTREAM(BoundsSafety) OFF */ else
     ParseLexedAttributeList(LateFieldAttrs, /*D=*/nullptr, /*EnterScope=*/false,
                             /*OnDefinition=*/false);
+
+  // Slice 1: resolve any LateParsedAttrType placeholders in field types now
+  // that all fields (and their sibling references) are parsed. In C, walks
+  // the record's FieldDecls, running RebuildTypeWithLateParsedAttr on each
+  // field's TSI and performing cross-field wiring (depender-decls attach,
+  // started_by attach, etc.) in a two-pass loop. The Parser callback is
+  // stored on the Sema so the walker can re-parse cached tokens without a
+  // Parser-side dependency.
+  Actions.ProcessLateParsedTypeAttributesForFields(
+      TagDecl, ParseLateParsedTypeAttributeCallback);
 
   StructScope.Exit();
   Actions.ActOnTagFinishDefinition(getCurScope(), TagDecl, T.getRange());
