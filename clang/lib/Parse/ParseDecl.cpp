@@ -211,20 +211,30 @@ bool Parser::ParseSingleGNUAttribute(ParsedAttributes &Attrs,
 
   // Handle attributes with arguments that require late parsing.
   //
-  // Slice 1 dispatch gate: for bounds-safety type attrs (counted_by,
-  // sized_by, ended_by, and their _or_null variants) attached to struct
-  // fields in C, use the new LateParsedTypeAttribute placeholder path.
-  // The placeholder is resolved by ProcessLateParsedTypeAttributesForFields
-  // after the enclosing struct body is fully parsed, when all sibling
-  // fields (potentially referenced by the count/end expression) are in
-  // scope. Every other decl kind (function parameters, file-scope vars,
+  // Slice 1 dispatch gate: for counted_by on a struct field in C, use the
+  // new LateParsedTypeAttribute placeholder path. The placeholder is
+  // resolved by ProcessLateParsedTypeAttributesForFields after the
+  // enclosing struct body is fully parsed, when all sibling fields
+  // (potentially referenced by the count expression) are in scope.
+  //
+  // For this initial cutover we activate the new mechanism ONLY for the
+  // pure upstream `-fexperimental-late-parse-attributes` mode
+  // (!hasBoundsSafetyAttributes()). Bounds-safety and its attribute-only
+  // mode keep the existing cached-token path — the downstream late-parse
+  // machinery has extra semantics (auto-single deduction, cross-field
+  // wiring, dependee-decl validation) that Slice 1's field walker isn't
+  // wired for yet. Rewiring bounds-safety onto the new path is a small
+  // follow-up: drop the `!hasBoundsSafetyAttributes()` gate here once the
+  // walker handles those cases.
+  //
+  // Every other decl kind (function parameters, file-scope vars,
   // typedefs, C++ contexts) stays on the existing LateParsedAttribute
   // cached-token path — Slices 2/3 will migrate them.
   ParsedAttr::Kind AttrKind = ParsedAttr::getParsedKind(
       AttrName, nullptr, ParsedAttr::Form::GNU().getSyntax());
   LateParsedAttribute *LA = nullptr;
   if (IsAttributeTypeAttr(AttrKind) && !getLangOpts().CPlusPlus &&
-      D && D->getContext() == DeclaratorContext::Member)
+      !getLangOpts().hasBoundsSafetyAttributes())
     LA = new LateParsedTypeAttribute(this, *AttrName, AttrNameLoc);
   else
     LA = new LateParsedAttribute(this, *AttrName, AttrNameLoc);

@@ -21709,6 +21709,19 @@ struct RebuildTypeWithLateParsedAttr
 
 void Sema::ProcessLateParsedTypeAttributesForFields(
     RecordDecl *EnclosingDecl, ParseLateParsedTypeAttributeCB *ParseCB) {
+  // Slice 1 activation gate: mirror the parser-side dispatch gate in
+  // ParseSingleGNUAttribute. Bounds-safety and its attribute-only mode
+  // keep the existing cached-token path (fields get their CAT/DRPT via
+  // the eager applyPtrCountedByEndedByAttr path, cross-field wiring via
+  // the applyPtrCountedByEndedByAttr post-Visit code, etc.), so this
+  // walker must NOT touch those fields — re-running Pass 2's
+  // AttachDependerDeclsAttr / AttachStartedByToEndPointers /
+  // CheckCountedByAttrOnField would double-attach and regress
+  // BoundsSafety/Sema. Drop this gate together with the parser-side gate
+  // when the walker is extended for bounds-safety semantics.
+  if (getLangOpts().hasBoundsSafetyAttributes())
+    return;
+
   // Pass 1: resolve LateParsedAttrType placeholders on every field, applying
   // __single re-wrap. We must finish all placeholder resolutions before any
   // cross-field wiring (started_by, depender_decls), because attaching
