@@ -105,6 +105,7 @@ enum class FloatModeKind;
 class GlobalDecl;
 class IdentifierTable;
 class LangOptions;
+struct LateParsedTypeAttribute;
 class MangleContext;
 class MangleNumberingContext;
 class MemberSpecializationInfo;
