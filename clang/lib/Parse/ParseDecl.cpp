@@ -34,6 +34,7 @@
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/StringSwitch.h"
+#include "llvm/Support/SaveAndRestore.h"
 #include <optional>
 
 using namespace clang;
@@ -223,6 +224,15 @@ bool Parser::ParseSingleGNUAttribute(ParsedAttributes &Attrs,
     LA = new LateParsedAttribute(this, *AttrName, AttrNameLoc);
 
   LateAttrs->push_back(LA);
+
+  // Record type attributes against the record currently being parsed, whose
+  // closing brace is when their arguments become resolvable. `LateAttrs` can't
+  // serve here: for a declarator-position attribute it is a transient local
+  // that is drained into a DeclaratorChunk, and for a decl-spec-position one
+  // TakeTypeAttrsAppendingFrom moves the entry into the DeclSpec.
+  if (auto *LTA = dyn_cast<LateParsedTypeAttribute>(LA);
+      LTA && CurRecordLateParsedTypeAttrs)
+    CurRecordLateParsedTypeAttrs->push_back(LTA);
 
   // Attributes in a class are parsed at the end of the class, along
   // with other late-parsed declarations.
@@ -4877,17 +4887,6 @@ void Parser::ParseStructDeclaration(
   }
 }
 
-void Parser::ParseLateParsedTypeAttributeCallback(LateParsedTypeAttribute *LTA,
-                                                  ParsedAttributes *Attrs) {
-  // Parse the cached attribute tokens
-  LTA->ParseInto(*Attrs);
-  // LateParsedTypeAttribute is no longer needed so delete it. Ideally,
-  // LateParsedAttrType would own this object, but LateParsedTypeAttribute
-  // is intentionally forward declared to avoid making the AST depend on
-  // Sema/Parser components.
-  delete LTA;
-}
-
 SourceLocation Parser::GetLateParsedAttributeLocationCallback(
     const LateParsedTypeAttribute *LTA) {
   assert(LTA);
@@ -4903,8 +4902,68 @@ bool Parser::ProcessLateParsedTypeAttrCallback(LateParsedAttribute *LA,
 
   ParsedAttr::Kind AttrKind = ParsedAttr::getParsedKind(
       &LTA->AttrName, nullptr, ParsedAttr::Form::GNU().getSyntax());
-  return LTA->Self->Actions.ActOnLateParsedTypeAttr(
-      AttrKind, LTA->AttrNameLoc, type, pointerNestLevel, LTA);
+  // Sema cannot see LateParsedTypeAttribute's definition, so it hands the node
+  // back and we record it here for the completion pass to fill in.
+  BoundsAttributedType *BATy = nullptr;
+  if (!LTA->Self->Actions.ActOnLateParsedTypeAttr(
+          AttrKind, LTA->AttrNameLoc, type, pointerNestLevel, &BATy))
+    return false;
+  LTA->TypeToComplete = BATy;
+  return true;
+}
+
+void Parser::CompleteLateParsedTypeAttributes(
+    RecordDecl *RD, SmallVectorImpl<LateParsedTypeAttribute *> &LateTypeAttrs) {
+  // Map each pending node to the field whose type contains it, so the
+  // decl-context checks have something to report against.
+  llvm::SmallDenseMap<const BoundsAttributedType *, FieldDecl *> OwningField;
+  for (Decl *D : RD->decls()) {
+    auto *FD = dyn_cast<FieldDecl>(D);
+    if (auto *IFD = dyn_cast<IndirectFieldDecl>(D)) {
+      assert(!FD);
+      FD = IFD->getAnonField();
+    }
+    if (!FD)
+      continue;
+    if (const auto *BATy = FD->getType()->getAs<BoundsAttributedType>())
+      OwningField.try_emplace(BATy, FD);
+  }
+
+  for (LateParsedTypeAttribute *LTA : LateTypeAttrs) {
+    // Read this out before parsing, which destroys the attribute. It is null if
+    // type construction rejected the attribute, in which case the diagnostic
+    // has already been emitted and there is nothing to complete.
+    BoundsAttributedType *BATy = LTA->TypeToComplete;
+
+    AttributeFactory AF;
+    ParsedAttributes Attrs(AF);
+    ParseLexedTypeAttribute(*LTA, Attrs);
+    delete LTA;
+
+    if (!BATy)
+      continue;
+    // An unparseable argument leaves no attribute behind; already diagnosed.
+    if (Attrs.empty())
+      continue;
+    assert(Attrs.size() == 1);
+
+    Expr *Arg = Attrs[0].getArgAsExpr(0);
+    assert(Arg);
+
+    auto It = OwningField.find(BATy);
+    if (It == OwningField.end()) {
+      // The type was rejected during construction — nested counted_by unwraps
+      // the node, leaving it unreferenced — so there is nothing to complete and
+      // no null count can reach the AST.
+      continue;
+    }
+
+    if (Actions.ActOnLateParsedTypeAttrArgument(BATy, It->second, Arg))
+      Attrs[0].setUsedAsTypeAttr();
+    else
+      Attrs[0].setInvalid();
+  }
+  LateTypeAttrs.clear();
 }
 
 ParsedAttributes Parser::ParseLexedCAttributeTokens(LateParsedAttribute &LA) {
@@ -4989,6 +5048,14 @@ void Parser::ParseStructUnionBody(SourceLocation RecordLoc,
   LateParsedAttrList LateFieldAttrs(/*PSoon=*/true,
                                     /*LateAttrParseExperimentalExtOnly=*/true);
 
+  // Pending late-parsed type attributes for this record, populated as its
+  // fields are parsed and drained at the closing brace. Exposed to nested
+  // bodies so an anonymous nested record can hand its own up to us;
+  // `Enclosing.get()` is our caller's list, or null for the outermost record.
+  SmallVector<LateParsedTypeAttribute *, 2> LateTypeAttrs;
+  llvm::SaveAndRestore<SmallVectorImpl<LateParsedTypeAttribute *> *> Enclosing(
+      CurRecordLateParsedTypeAttrs, &LateTypeAttrs);
+
   // While we still have something to read, read the declarations in the struct.
   while (!tryParseMisplacedModuleImport() && Tok.isNot(tok::r_brace) &&
          Tok.isNot(tok::eof)) {
@@ -5055,33 +5122,11 @@ void Parser::ParseStructUnionBody(SourceLocation RecordLoc,
       ParsingDeclSpec DS(*this);
       ParseStructDeclaration(DS, CFieldCallback, &LateFieldAttrs);
       if (DS.getTypeSpecType() == TST_struct) {
+        // A nested record resolves its own late-parsed type attributes at the
+        // end of its body, while its fields are still in scope; anonymous
+        // records hand theirs up to us, since their count may only become
+        // visible once they are flattened into this record.
 
-        if (getLangOpts().ExperimentalLateParseAttributes) {
-          auto *RD = dyn_cast<RecordDecl>(DS.getRepAsDecl());
-          // The field contains a nested record definition. Trigger late
-          // parsing now for non-anonymous records; anonymous struct/union
-          // fields are handled as part of the enclosing record instead.
-          if (RD && !RD->isAnonymousStructOrUnion()) {
-            std::optional<ParseScope> RecordReentryScope;
-            if (!getLangOpts().CPlusPlus) {
-              RecordReentryScope.emplace(this,
-                                         Scope::ClassScope | Scope::DeclScope);
-              Actions.EnterDeclaratorContext(getCurScope(), RD);
-              for (Decl *D : RD->decls()) {
-                if (auto *ND = dyn_cast<NamedDecl>(D)) {
-                  if (ND->getDeclName())
-                    Actions.PushOnScopeChains(ND, getCurScope(),
-                                              /*AddToContext=*/false);
-                }
-              }
-            }
-
-            Actions.ProcessLateParsedTypeAttributes(
-                RD, ParseLateParsedTypeAttributeCallback);
-            if (RecordReentryScope)
-              Actions.ExitDeclaratorContext(getCurScope());
-          }
-        }
         // Report an error if a counted_by attribute refers to a field in a
         // different named struct.
         DiagnoseCountAttributedTypeInUnnamedAnon(DS, *this);
@@ -5136,15 +5181,30 @@ void Parser::ParseStructUnionBody(SourceLocation RecordLoc,
   ParseLexedAttributeList(LateFieldAttrs, /*D=*/nullptr, /*EnterScope=*/false,
                           /*OnDefinition=*/false);
 
-  Scope *ParentScope = getCurScope()->getParent();
-  assert(ParentScope);
-  // Process late-parsed type attributes for the outermost record. Nested
-  // non-anonymous records are handled immediately after their declaration is
-  // parsed, which is when it is known whether the record is anonymous.
+  // Resolve late-parsed type attributes while this record's fields are still in
+  // scope. A truly anonymous record can't do that yet — its count may live in
+  // the enclosing record and only becomes visible once its members are
+  // flattened in — so it hands its pending attributes up instead.
+  //
+  // `isAnonymousStructOrUnion()` isn't set until the enclosing context sees
+  // whether a declarator follows, which happens after we return. Determine it
+  // the way the parser can: no tag name and no declarator after the body. Any
+  // attribute-specifiers between `}` and the `;`/declarator are skipped with a
+  // reverting tentative parse, so a trailing `[[...]]` / `__attribute__` etc.
+  // doesn't defeat the check.
   if (getLangOpts().ExperimentalLateParseAttributes &&
-      !ParentScope->isClassScope())
-    Actions.ProcessLateParsedTypeAttributes(
-        TagDecl, ParseLateParsedTypeAttributeCallback);
+      !LateTypeAttrs.empty()) {
+    bool IsAnonymous = false;
+    if (!TagDecl->getIdentifier()) {
+      TentativeParsingAction TPA(*this);
+      IsAnonymous = TrySkipAttributes() && Tok.is(tok::semi);
+      TPA.Revert();
+    }
+    if (IsAnonymous && Enclosing.get())
+      llvm::append_range(*Enclosing.get(), LateTypeAttrs);
+    else
+      CompleteLateParsedTypeAttributes(TagDecl, LateTypeAttrs);
+  }
   StructScope.Exit();
   Actions.ActOnTagFinishDefinition(getCurScope(), TagDecl, T.getRange());
 }

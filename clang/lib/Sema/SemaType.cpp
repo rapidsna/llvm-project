@@ -416,6 +416,10 @@ static bool processLateTypeAttrs(TypeProcessingState &state, QualType &type,
                                  const LateParsedAttrList &LateAttrs,
                                  unsigned chunkIndex = 0);
 
+static void
+BuildTypeCoupledDecls(Expr *E,
+                      llvm::SmallVectorImpl<TypeCoupledDeclRefInfo> &Decls);
+
 static bool handleFunctionTypeAttr(TypeProcessingState &state, ParsedAttr &attr,
                                    QualType &type, CUDAFunctionTarget CFT);
 
@@ -4724,6 +4728,26 @@ static TypeSourceInfo *GetFullTypeForDeclarator(TypeProcessingState &state,
     state.setCurrentChunkIndex(chunkIndex);
     DeclaratorChunk &DeclType = D.getTypeObject(chunkIndex);
     IsQualifiedFunction &= DeclType.Kind == DeclaratorChunk::Paren;
+
+    // A counted_by-family attribute has to end up at the outermost level of the
+    // declared type. `int *__counted_by(n) *p` would bury the
+    // CountAttributedType under another pointer, where the bounds can't be
+    // maintained, so diagnose as soon as a chunk is about to wrap one. Only
+    // reachable for late-parsed attributes, since the eager path applies the
+    // attribute after the declarator is built.
+    if (DeclType.Kind == DeclaratorChunk::Pointer ||
+        DeclType.Kind == DeclaratorChunk::Array) {
+      if (const auto *CATy = T->getAs<CountAttributedType>()) {
+        S.Diag(DeclType.Loc, diag::err_counted_by_on_nested_pointer)
+            << CATy->getKind();
+        // Drop the attribute rather than leaving the CountAttributedType buried
+        // inside the type: the completion pass finds nodes via the field's
+        // top-level type, so a nested one would never receive its count
+        // expression and would reach the rest of Sema with a null count.
+        T = CATy->desugar();
+      }
+    }
+
     switch (DeclType.Kind) {
     case DeclaratorChunk::Paren:
       if (i == 0)
@@ -9257,12 +9281,51 @@ static void HandleCountedByAttrOnType(TypeProcessingState &State,
 bool Sema::ActOnLateParsedTypeAttr(ParsedAttr::Kind AttrKind,
                                    SourceLocation AttrNameLoc, QualType &type,
                                    unsigned pointerNestLevel,
-                                   LateParsedTypeAttribute *LTA) {
+                                   BoundsAttributedType **BATy) {
   bool CountInBytes, OrNull;
   if (!validateCountedByAttrType(*this, type, AttrKind, AttrNameLoc,
                                  pointerNestLevel, CountInBytes, OrNull))
     return false;
-  type = getASTContext().getLateParsedAttrType(type, LTA);
+
+  // The argument hasn't been parsed yet, so build the type without it and hand
+  // the node back for completion. Because enclosing types refer to it by
+  // pointer, filling the argument in later leaves them untouched — no rebuild
+  // of the type chain and no TypeLoc re-emission.
+  auto *CATy = getASTContext().getIncompleteCountAttributedType(
+      type, CountInBytes, OrNull);
+  type = QualType(CATy, 0);
+  *BATy = CATy;
+  return true;
+}
+
+bool Sema::ActOnLateParsedTypeAttrArgument(BoundsAttributedType *BATy,
+                                          FieldDecl *FD, Expr *Arg) {
+  // Only the counted_by family exists so far. `ended_by` would add a
+  // DynamicRangePointerType arm here.
+  auto *CATy = cast<CountAttributedType>(BATy);
+
+  // Validate before deriving the coupled decls: BuildTypeCoupledDecls requires
+  // a simple declaration reference, which is one of the things this rejects.
+  if (CheckCountedByAttrOnFieldDecl(FD, Arg, CATy->isCountInBytes(),
+                                    CATy->isOrNull())) {
+    // Rejected. Strip the incomplete CountAttributedType so the field keeps its
+    // plain wrapped type, matching the eager path, which never builds a CAT on
+    // rejection. Completing the node with a non-simple-reference argument would
+    // leave a CountAttributedType whose count expression is, e.g., a
+    // UnaryExprOrTypeTraitExpr — and FieldDecl::findCountedByField casts the
+    // count to DeclRefExpr unconditionally, which would crash later in Sema or
+    // CodeGen.
+    QualType Wrapped = CATy->desugar();
+    FD->setType(Wrapped);
+    FD->setTypeSourceInfo(
+        Context.getTrivialTypeSourceInfo(Wrapped, FD->getLocation()));
+    return false;
+  }
+
+  llvm::SmallVector<TypeCoupledDeclRefInfo, 1> Decls;
+  BuildTypeCoupledDecls(Arg, Decls);
+  getASTContext().completeCountAttributedType(CATy, Arg, Decls);
+
   return true;
 }
 

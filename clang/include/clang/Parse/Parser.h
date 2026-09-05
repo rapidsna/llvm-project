@@ -232,6 +232,16 @@ public:
 /// is replaced with a concrete type (e.g., CountAttributedType).
 struct LateParsedTypeAttribute : public LateParsedAttribute {
 
+  /// The type built for this attribute during type construction, still missing
+  /// the argument that hasn't been parsed yet. Filled in by
+  /// `Parser::ProcessLateParsedTypeAttrCallback` and completed once the
+  /// enclosing scope makes the argument parseable. Null if type construction
+  /// rejected the attribute.
+  ///
+  /// Held as the base class so the parser stays agnostic about which bounds
+  /// attribute this is; Sema dispatches on the concrete kind when completing.
+  BoundsAttributedType *TypeToComplete = nullptr;
+
   explicit LateParsedTypeAttribute(Parser *P, IdentifierInfo &Name,
                                    SourceLocation Loc)
       : LateParsedAttribute(P, Name, Loc, Kind::Type) {}
@@ -8139,21 +8149,13 @@ private:
 
   static void LateTemplateParserCallback(void *P, LateParsedTemplate &LPT);
 
-  /// Parse the cached tokens stored in \p LTA into \p OutAttrs.
-  ///
-  /// This callback takes ownership of \p LTA and deletes it. Ideally
-  /// \c LateParsedAttrType would own the object, but \c LateParsedTypeAttribute
-  /// is intentionally forward-declared in the AST layer to avoid a dependency
-  /// on Parser/Sema headers.
-  static void ParseLateParsedTypeAttributeCallback(LateParsedTypeAttribute *LTA,
-                                                   ParsedAttributes *OutAttrs);
-
   /// Return the source location of the attribute name stored in \p LTA.
   static SourceLocation
   GetLateParsedAttributeLocationCallback(const LateParsedTypeAttribute *LTA);
 
-  /// Validate \p LA as a late-parsed type attribute and, if valid, wrap
-  /// \p type in a \c LateParsedAttrType placeholder in-place.
+  /// Validate \p LA as a late-parsed type attribute and, if valid, wrap \p type
+  /// in a \c CountAttributedType whose count expression is not yet known,
+  /// recording the node on \p LA so it can be completed later.
   ///
   /// \p LA is downcast to \c LateParsedTypeAttribute; if the cast fails the
   /// attribute is not applicable here and the function returns \c true to skip.
@@ -8164,6 +8166,19 @@ private:
   static bool ProcessLateParsedTypeAttrCallback(LateParsedAttribute *LA,
                                                 QualType &type,
                                                 unsigned pointerNestLevel);
+
+  /// Parse the cached arguments of \p LateTypeAttrs and supply them to the types
+  /// built for them, now that \p RD's members are visible. Consumes and clears
+  /// \p LateTypeAttrs.
+  void CompleteLateParsedTypeAttributes(
+      RecordDecl *RD, SmallVectorImpl<LateParsedTypeAttribute *> &LateTypeAttrs);
+
+  /// The late-parsed type attributes of the record currently being parsed, so a
+  /// nested anonymous record can hand its unresolved attributes to the enclosing
+  /// record whose scope makes their arguments visible. Null outside a record
+  /// body.
+  SmallVectorImpl<LateParsedTypeAttribute *> *CurRecordLateParsedTypeAttrs =
+      nullptr;
 
   /// We've parsed something that could plausibly be intended to be a template
   /// name (\p LHS) followed by a '<' token, and the following code can't

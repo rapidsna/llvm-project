@@ -3754,10 +3754,23 @@ QualType ASTContext::removePtrSizeAddrSpace(QualType T) const {
   return T;
 }
 
+/// Allocate \p Decls in this context so a CountAttributedType can retain it by
+/// reference.
+static ArrayRef<TypeCoupledDeclRefInfo>
+allocateCoupledDecls(const ASTContext &Ctx,
+                     ArrayRef<TypeCoupledDeclRefInfo> Decls) {
+  if (Decls.empty())
+    return {};
+  auto *Slots = Ctx.Allocate<TypeCoupledDeclRefInfo>(Decls.size());
+  llvm::copy(Decls, Slots);
+  return ArrayRef(Slots, Decls.size());
+}
+
 QualType ASTContext::getCountAttributedType(
     QualType WrappedTy, Expr *CountExpr, bool CountInBytes, bool OrNull,
     ArrayRef<TypeCoupledDeclRefInfo> DependentDecls) const {
   assert(WrappedTy->isPointerType() || WrappedTy->isArrayType());
+  assert(CountExpr && "use getIncompleteCountAttributedType for a null count");
 
   llvm::FoldingSetNodeID ID;
   CountAttributedType::Profile(ID, WrappedTy, CountExpr, CountInBytes, OrNull);
@@ -3768,15 +3781,42 @@ QualType ASTContext::getCountAttributedType(
     return QualType(CATy, 0);
 
   QualType CanonTy = getCanonicalType(WrappedTy);
-  size_t Size = CountAttributedType::totalSizeToAlloc<TypeCoupledDeclRefInfo>(
-      DependentDecls.size());
-  CATy = (CountAttributedType *)Allocate(Size, TypeAlignment);
-  new (CATy) CountAttributedType(WrappedTy, CanonTy, CountExpr, CountInBytes,
-                                 OrNull, DependentDecls);
+  CATy = new (*this, TypeAlignment)
+      CountAttributedType(WrappedTy, CanonTy, CountExpr, CountInBytes, OrNull,
+                          allocateCoupledDecls(*this, DependentDecls));
   Types.push_back(CATy);
   CountAttributedTypes.insert(CATy, Token);
 
   return QualType(CATy, 0);
+}
+
+CountAttributedType *ASTContext::getIncompleteCountAttributedType(
+    QualType WrappedTy, bool CountInBytes, bool OrNull) const {
+  assert(WrappedTy->isPointerType() || WrappedTy->isArrayType());
+
+  // Deliberately not uniqued. `CountAttributedType::Profile` keys on the
+  // `CountExpr` pointer, so every incomplete node would hash identically as
+  // `(WrappedTy, flags, nullptr)` and two fields with different counts would
+  // share a node. `getVariableArrayType` declines to unique for the same
+  // underlying reason: expressions themselves are not uniqued. Re-inserting
+  // once completed would gain nothing either, since anyone rebuilding the type
+  // arrives with a fresh `Expr *` and misses regardless.
+  //
+  // Not added to `Types` yet: an incomplete node whose position turns out to be
+  // invalid (a nested counted_by, or a rejected argument) is abandoned without
+  // completion, and a node with a null count must never be reachable by
+  // anything that iterates `Types`. It is registered in
+  // `completeCountAttributedType` instead.
+  return new (*this, TypeAlignment) CountAttributedType(
+      WrappedTy, getCanonicalType(WrappedTy), /*CountExpr=*/nullptr,
+      CountInBytes, OrNull, /*CoupledDecls=*/{});
+}
+
+void ASTContext::completeCountAttributedType(
+    CountAttributedType *CATy, Expr *CountExpr,
+    ArrayRef<TypeCoupledDeclRefInfo> DependentDecls) const {
+  CATy->setCountExpr(CountExpr, allocateCoupledDecls(*this, DependentDecls));
+  Types.push_back(CATy);
 }
 
 QualType ASTContext::getLateParsedAttrType(

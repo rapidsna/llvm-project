@@ -1359,11 +1359,6 @@ public:
   /// Callbacks to the parser to interact with late-parsed type attributes.
   /// These allow Sema to call back into Parser without including Parser.h.
 
-  /// Callback type to parse and consume a LateParsedTypeAttribute. Used as an
-  /// argument to ProcessLateParsedTypeAttributes.
-  typedef void ParseLateParsedTypeAttributeCB(LateParsedTypeAttribute *LTA,
-                                              ParsedAttributes *OutAttrs);
-
   /// Callback to get the attribute name location from a
   /// LateParsedTypeAttribute.
   typedef SourceLocation
@@ -1386,14 +1381,22 @@ public:
     ProcessLateParsedTypeAttrCallback = ProcessCB;
   }
 
-  /// Called from the Parser's ProcessLateParsedTypeAttrCallback to validate
-  /// a counted_by-family attribute type and, if valid, wrap \p type in a
-  /// LateParsedAttrType node. Returns false if the attribute should be
-  /// dropped.
+  /// Called from the Parser's ProcessLateParsedTypeAttrCallback to validate a
+  /// counted_by-family attribute type and, if valid, wrap \p type in a
+  /// CountAttributedType whose count expression is not yet known. Returns false
+  /// if the attribute should be dropped, otherwise sets \p BATy to the node the
+  /// caller must complete once the argument is parseable.
   bool ActOnLateParsedTypeAttr(ParsedAttr::Kind AttrKind,
                                SourceLocation AttrNameLoc, QualType &type,
                                unsigned pointerNestLevel,
-                               LateParsedTypeAttribute *LTA);
+                               BoundsAttributedType **BATy);
+
+  /// Supply the parsed argument of a late-parsed bounds attribute to the type
+  /// built for it by ActOnLateParsedTypeAttr, and run the checks that need the
+  /// owning declaration. \p FD is the field the type belongs to. Returns false
+  /// if the attribute was rejected.
+  bool ActOnLateParsedTypeAttrArgument(BoundsAttributedType *BATy,
+                                       FieldDecl *FD, Expr *Arg);
 
   /// Callback to the parser to parse a type expressed as a string.
   std::function<TypeResult(StringRef, StringRef, SourceLocation)>
@@ -4477,13 +4480,6 @@ public:
   void ActOnFields(Scope *S, SourceLocation RecLoc, Decl *TagDecl,
                    ArrayRef<Decl *> Fields, SourceLocation LBrac,
                    SourceLocation RBrac, const ParsedAttributesView &AttrList);
-
-  /// Transform field types that contain late-parsed type attributes.
-  /// Called from two sites: once immediately after parsing a nested
-  /// non-anonymous record body, and once after ActOnFields for the outermost
-  /// record.
-  void ProcessLateParsedTypeAttributes(RecordDecl *EnclosingDecl,
-                                       ParseLateParsedTypeAttributeCB *ParseCB);
 
   /// ActOnTagStartDefinition - Invoked when we have entered the
   /// scope of a tag's definition (e.g., for an enumeration, class,

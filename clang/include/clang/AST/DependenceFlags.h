@@ -69,18 +69,12 @@ struct TypeDependenceScope {
     /// yields an error type.
     Error = 16,
 
-    /// Whether this type contains a LateParsedAttrType placeholder — a
-    /// bounds-safety type attribute deferred until enclosing declarations
-    /// are visible. Cleared once RebuildTypeWithLateParsedAttr resolves
-    /// the placeholder into a concrete type (e.g. CountAttributedType).
-    LateParsedAttr = 32,
-
     None = 0,
-    All = 63,
+    All = 31,
 
     DependentInstantiation = Dependent | Instantiation,
 
-    LLVM_MARK_AS_BITMASK_ENUM(/*LargestValue=*/LateParsedAttr)
+    LLVM_MARK_AS_BITMASK_ENUM(/*LargestValue=*/Error)
   };
 };
 using TypeDependence = TypeDependenceScope::TypeDependence;

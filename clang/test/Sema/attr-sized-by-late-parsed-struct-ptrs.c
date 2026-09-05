@@ -161,13 +161,11 @@ struct on_member_pointer_fn_ptr_ty_ty_ty_pos_inner {
 };
 
 struct on_member_pointer_struct_with_vla_ty_pos {
-  // expected-error@+1{{'sized_by' cannot be applied to a pointer with pointee of unknown size because 'struct has_unannotated_vla' is a struct type with a flexible array member}}
   struct has_unannotated_vla *__sized_by(size) objects;
   int size;
 };
 
 struct on_member_pointer_struct_with_annotated_vla_ty_pos {
-  // expected-error@+1{{'sized_by' cannot be applied to a pointer with pointee of unknown size because 'struct has_annotated_vla' is a struct type with a flexible array member}}
   struct has_annotated_vla* __sized_by(size) objects;
   int size;
 };
